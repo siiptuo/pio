@@ -211,11 +211,11 @@ fn compress_image(image: impl Image, target: f64, input_path: &Path, output_path
 
     let mut min = 40;
     let mut max = 95;
-
-    let mut quality = (min + max) / 2;
+    let mut compressed;
 
     loop {
-        let compressed = image.compress(quality);
+        let quality = (min + max) / 2;
+        compressed = image.compress(quality);
 
         let mut attr = Dssim::new();
         let (dssim, _ssim_maps) =
@@ -237,13 +237,12 @@ fn compress_image(image: impl Image, target: f64, input_path: &Path, output_path
         }
 
         if min > max {
-            let mut output = File::create(output_path).unwrap();
-            output.write_all(compressed.bytes()).unwrap();
             break;
         }
-
-        quality = (min + max) / 2;
     }
+
+    let mut output = File::create(output_path).unwrap();
+    output.write_all(compressed.bytes()).unwrap();
 }
 
 fn main() {

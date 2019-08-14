@@ -1,0 +1,23 @@
+# SPDX-FileCopyrightText: 2019 Tuomas Siipola
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+language: rust
+rust:
+  - stable
+  - beta
+  - nightly
+matrix:
+  allow_failures:
+    - rust: nightly
+  fast_finish: true
+services:
+  - docker
+before_script:
+  - rustup component add clippy rustfmt
+  - docker pull fsfe/reuse:latest
+script:
+  - cargo build
+  - cargo test
+  - cargo clippy
+  - cargo fmt --all -- --check
+  - docker run --name reuse -v ${TRAVIS_BUILD_DIR}:/repo fsfe/reuse /bin/sh -c "cd /repo; reuse lint"

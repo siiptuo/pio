@@ -3,12 +3,14 @@
 
 use dssim::{Dssim, RGBAPLU};
 use imgref::*;
+use libwebp_sys::*;
 use mozjpeg::{ColorSpace, Compress, Decompress};
-use rgb::{ComponentBytes, RGB8, RGBA};
+use rgb::{ComponentBytes, FromSlice, RGB8, RGBA};
 use std::env;
 use std::fs::{self, File};
 use std::io::prelude::*;
 use std::path::Path;
+use std::slice;
 
 trait Image {
     /// Quality between 0 - 100
@@ -184,10 +186,94 @@ impl Image for Png {
     }
 }
 
+struct WebP {
+    width: usize,
+    height: usize,
+    pixels: *mut u8,
+    buffer: Vec<u8>,
+}
+
+impl WebP {
+    fn new(path: impl AsRef<Path>) -> Self {
+        let mut width = 0;
+        let mut height = 0;
+
+        let mut file = File::open(path).unwrap();
+        let mut buffer = Vec::new();
+        file.read_to_end(&mut buffer).unwrap();
+
+        let pixels = unsafe {
+            WebPGetInfo(buffer.as_ptr(), buffer.len(), &mut width, &mut height);
+            WebPDecodeRGB(buffer.as_ptr(), buffer.len(), &mut width, &mut height)
+        };
+
+        Self {
+            width: width as usize,
+            height: height as usize,
+            pixels,
+            buffer,
+        }
+    }
+}
+
+impl Image for WebP {
+    fn compress(&self, quality: u8) -> Self {
+        unsafe {
+            let mut buffer = Box::into_raw(Box::new(0u8)) as *mut _;
+            let stride = self.width as i32 * 3;
+            let len = WebPEncodeRGB(
+                self.pixels,
+                self.width as i32,
+                self.height as i32,
+                stride,
+                quality as f32,
+                &mut buffer as *mut _,
+            );
+            let pixels = WebPDecodeRGB(buffer, len, std::ptr::null_mut(), std::ptr::null_mut());
+            Self {
+                width: self.width,
+                height: self.height,
+                pixels,
+                buffer: Vec::from_raw_parts(buffer, len as usize, len as usize),
+            }
+        }
+    }
+
+    fn pixels(&self) -> ImgVec<RGBAPLU> {
+        ImgVec::new(
+            unsafe { slice::from_raw_parts(self.pixels, 3 * self.width * self.height) }
+                .as_rgb()
+                .iter()
+                .map(|x| {
+                    RGBA::new(
+                        x.r as f32 / u8::max_value() as f32,
+                        x.g as f32 / u8::max_value() as f32,
+                        x.b as f32 / u8::max_value() as f32,
+                        1.0,
+                    )
+                })
+                .collect(),
+            self.width,
+            self.height,
+        )
+    }
+
+    fn size(&self) -> usize {
+        assert!(!self.buffer.is_empty());
+        self.buffer.len()
+    }
+
+    fn bytes(&self) -> &[u8] {
+        assert!(!self.buffer.is_empty());
+        &self.buffer
+    }
+}
+
 #[derive(PartialEq)]
 enum Format {
     JPEG,
     PNG,
+    WEBP,
 }
 
 impl Format {
@@ -197,6 +283,7 @@ impl Format {
             .and_then(|ext| match ext {
                 "jpeg" | "jpg" => Some(Format::JPEG),
                 "png" => Some(Format::PNG),
+                "webp" => Some(Format::WEBP),
                 _ => None,
             })
     }
@@ -261,5 +348,6 @@ fn main() {
     match input_format {
         Format::JPEG => compress_image(Jpeg::new(input_path), target, input_path, output_path),
         Format::PNG => compress_image(Png::new(input_path), target, input_path, output_path),
+        Format::WEBP => compress_image(WebP::new(input_path), target, input_path, output_path),
     };
 }

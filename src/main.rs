@@ -202,16 +202,23 @@ impl WebP {
         let mut buffer = Vec::new();
         file.read_to_end(&mut buffer).unwrap();
 
-        let pixels = unsafe {
-            WebPGetInfo(buffer.as_ptr(), buffer.len(), &mut width, &mut height);
-            WebPDecodeRGB(buffer.as_ptr(), buffer.len(), &mut width, &mut height)
-        };
+        let pixels =
+            unsafe { WebPDecodeRGB(buffer.as_ptr(), buffer.len(), &mut width, &mut height) };
+        assert!(!pixels.is_null());
 
         Self {
             width: width as usize,
             height: height as usize,
             pixels,
             buffer,
+        }
+    }
+}
+
+impl Drop for WebP {
+    fn drop(&mut self) {
+        unsafe {
+            WebPFree(self.pixels as *mut std::ffi::c_void);
         }
     }
 }
@@ -229,7 +236,9 @@ impl Image for WebP {
                 quality as f32,
                 &mut buffer as *mut _,
             );
+            assert!(len != 0);
             let pixels = WebPDecodeRGB(buffer, len, std::ptr::null_mut(), std::ptr::null_mut());
+            assert!(!pixels.is_null());
             Self {
                 width: self.width,
                 height: self.height,

@@ -16,12 +16,10 @@ trait Image {
     /// Quality between 0 - 100
     fn compress(&self, quality: u8) -> Self;
 
+    /// Get pixel data
     fn pixels(&self) -> ImgVec<RGBAPLU>;
 
-    /// Size of compressed image on disk
-    fn size(&self) -> usize;
-
-    /// Save on disk
+    /// Get bytes of compressed image
     fn bytes(&self) -> &[u8];
 }
 
@@ -93,11 +91,6 @@ impl Image for Jpeg {
             self.width,
             self.height,
         )
-    }
-
-    fn size(&self) -> usize {
-        assert!(!self.buffer.is_empty());
-        self.buffer.len()
     }
 
     fn bytes(&self) -> &[u8] {
@@ -173,11 +166,6 @@ impl Image for Png {
             self.width,
             self.height,
         )
-    }
-
-    fn size(&self) -> usize {
-        assert!(!self.buffer.is_empty());
-        self.buffer.len()
     }
 
     fn bytes(&self) -> &[u8] {
@@ -267,11 +255,6 @@ impl Image for WebP {
         )
     }
 
-    fn size(&self) -> usize {
-        assert!(!self.buffer.is_empty());
-        self.buffer.len()
-    }
-
     fn bytes(&self) -> &[u8] {
         assert!(!self.buffer.is_empty());
         &self.buffer
@@ -322,8 +305,8 @@ fn compress_image(image: impl Image, target: f64, input_path: &Path, output_path
             max,
             quality,
             dssim,
-            compressed.size(),
-            100 * compressed.size() as u64 / original_size
+            compressed.bytes().len(),
+            100 * compressed.bytes().len() as u64 / original_size
         );
 
         if dssim > target {

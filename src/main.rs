@@ -1,12 +1,13 @@
 // SPDX-FileCopyrightText: 2019 Tuomas Siipola
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+use clap::{App, Arg};
 use dssim::{Dssim, RGBAPLU};
 use imgref::*;
 use libwebp_sys::*;
 use mozjpeg::{ColorSpace, Compress, Decompress};
 use rgb::{ComponentBytes, FromSlice, RGB8, RGBA};
-use std::env;
+
 use std::fs::{self, File};
 use std::io::prelude::*;
 use std::path::Path;
@@ -281,15 +282,22 @@ impl Format {
     }
 }
 
-fn compress_image(image: impl Image, target: f64, input_path: &Path, output_path: &Path) {
+fn compress_image(
+    image: impl Image,
+    target: f64,
+    min_quality: u8,
+    max_quality: u8,
+    input_path: &Path,
+    output_path: &Path,
+) {
     let original_size = fs::metadata(&input_path).unwrap().len();
-    println!("original size {} bytes", original_size);
+    eprintln!("original size {} bytes", original_size);
 
     let attr = Dssim::new();
     let original = attr.create_image(&image.pixels()).unwrap();
 
-    let mut min = 40;
-    let mut max = 95;
+    let mut min = min_quality;
+    let mut max = max_quality;
     let mut compressed;
 
     loop {
@@ -299,7 +307,7 @@ fn compress_image(image: impl Image, target: f64, input_path: &Path, output_path
         let mut attr = Dssim::new();
         let (dssim, _ssim_maps) =
             attr.compare(&original, attr.create_image(&compressed.pixels()).unwrap());
-        println!(
+        eprintln!(
             "range {} - {} quality {}, SSIM {:.6} {} bytes, {} % of original",
             min,
             max,
@@ -324,22 +332,132 @@ fn compress_image(image: impl Image, target: f64, input_path: &Path, output_path
     output.write_all(compressed.bytes()).unwrap();
 }
 
+fn validate_target(x: String) -> Result<(), String> {
+    match x.parse::<f64>() {
+        Ok(x) => {
+            if x >= 0.0 {
+                Ok(())
+            } else {
+                Err("expected value between 0.0 and infinity".to_string())
+            }
+        }
+        Err(_) => Err("expected value between 0.0 and infinity".to_string()),
+    }
+}
+
+fn validate_quality(x: String) -> Result<(), String> {
+    match x.parse::<i8>() {
+        Ok(x) => {
+            if x >= 0 || x <= 100 {
+                Ok(())
+            } else {
+                Err("expected value between 0 and 100".to_string())
+            }
+        }
+        Err(_) => Err("expected value between 0 and 100".to_string()),
+    }
+}
+
 fn main() {
-    let target = env::args().nth(1).unwrap().parse().unwrap();
+    let matches = App::new("pio")
+        .about("Perceptual Image Optimizer")
+        .version(clap::crate_version!())
+        .arg(
+            Arg::with_name("INPUT")
+                .help("Sets the input file to use")
+                .required(true)
+                .index(1),
+        )
+        .arg(
+            Arg::with_name("OUTPUT")
+                .help("Set the output file to use")
+                .required(true)
+                .index(2),
+        )
+        .arg(
+            Arg::with_name("target")
+                .long("target")
+                .value_name("SSIM")
+                .help("Set the target SSIM")
+                .takes_value(true)
+                .default_value("0.01")
+                .validator(validate_target),
+        )
+        .arg(
+            Arg::with_name("min")
+                .long("min")
+                .value_name("quality")
+                .help("Sets the minimum quality for output")
+                .takes_value(true)
+                .default_value("40")
+                .validator(validate_quality),
+        )
+        .arg(
+            Arg::with_name("max")
+                .long("max")
+                .value_name("quality")
+                .help("Sets the maximum quality for output")
+                .takes_value(true)
+                .default_value("95")
+                .validator(validate_quality),
+        )
+        .get_matches();
 
-    let input_path = env::args_os().nth(2).unwrap();
-    let input_path = Path::new(&input_path);
-    let input_format = Format::detect(input_path).expect("jpeg or png");
+    let input = matches.value_of("INPUT").unwrap();
+    let input_path = Path::new(input);
+    let input_format = match Format::detect(input_path) {
+        Some(ext) => ext,
+        None => {
+            eprintln!("input must be jpeg, png or webp");
+            std::process::exit(1);
+        }
+    };
 
-    let output_path = env::args_os().nth(3).unwrap();
-    let output_path = Path::new(&output_path);
-    let output_format = Format::detect(output_path).expect("jpeg or png");
+    let output = matches.value_of("OUTPUT").unwrap();
+    let output_path = Path::new(output);
+    let output_format = match Format::detect(output_path) {
+        Some(ext) => ext,
+        None => {
+            eprintln!("output must be jpeg, png or webp");
+            std::process::exit(1);
+        }
+    };
 
     assert!(input_format == output_format);
 
+    let target = matches.value_of("target").unwrap().parse().unwrap();
+
+    let min: u8 = matches.value_of("min").unwrap().parse().unwrap();
+    let max: u8 = matches.value_of("max").unwrap().parse().unwrap();
+    if min > max {
+        eprintln!("min must be smaller or equal to max");
+        std::process::exit(1);
+    }
+
     match input_format {
-        Format::JPEG => compress_image(Jpeg::new(input_path), target, input_path, output_path),
-        Format::PNG => compress_image(Png::new(input_path), target, input_path, output_path),
-        Format::WEBP => compress_image(WebP::new(input_path), target, input_path, output_path),
+        Format::JPEG => compress_image(
+            Jpeg::new(input_path),
+            target,
+            min,
+            max,
+            input_path,
+            output_path,
+        ),
+        Format::PNG => compress_image(
+            Png::new(input_path),
+            target,
+            min,
+            max,
+            input_path,
+            output_path,
+        ),
+        Format::WEBP => compress_image(
+            WebP::new(input_path),
+            target,
+            min,
+            max,
+            input_path,
+            output_path,
+        ),
     };
 }

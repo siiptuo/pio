@@ -3,263 +3,158 @@
 
 use clap::{App, Arg};
 use dssim::{Dssim, RGBAPLU};
-use imgref::*;
+use imgref::{Img, ImgRef, ImgVec};
 use libwebp_sys::*;
-use mozjpeg::{ColorSpace, Compress, Decompress};
-use rgb::{ComponentBytes, FromSlice, RGB8, RGBA};
+use mozjpeg;
+use rgb::{ComponentBytes, RGB8, RGBA, RGBA8};
 
 use std::fs::{self, File};
 use std::io::prelude::*;
 use std::path::Path;
-use std::slice;
 
-trait Image {
-    /// Quality between 0 - 100
-    fn compress(&self, quality: u8) -> Self;
-
-    /// Get pixel data
-    fn pixels(&self) -> ImgVec<RGBAPLU>;
-
-    /// Get bytes of compressed image
-    fn bytes(&self) -> &[u8];
+fn read_jpeg(path: impl AsRef<Path>) -> ImgVec<RGB8> {
+    let dinfo = mozjpeg::Decompress::new_path(path).unwrap();
+    let mut rgb = dinfo.rgb().unwrap();
+    let width = rgb.width();
+    let height = rgb.height();
+    let data: Vec<RGB8> = rgb.read_scanlines().unwrap();
+    rgb.finish_decompress();
+    Img::new(data, width, height)
 }
 
-struct Jpeg {
-    width: usize,
-    height: usize,
-    color_space: ColorSpace,
-    pixels: Vec<RGB8>,
-    buffer: Vec<u8>,
+fn compress_jpeg(image: ImgRef<RGB8>, quality: u8) -> (ImgVec<RGB8>, Vec<u8>) {
+    let mut cinfo = mozjpeg::Compress::new(mozjpeg::ColorSpace::JCS_RGB);
+    cinfo.set_size(image.width(), image.height());
+    cinfo.set_quality(quality as f32);
+    cinfo.set_mem_dest();
+    cinfo.start_compress();
+    assert!(cinfo.write_scanlines(image.buf.as_bytes()));
+    cinfo.finish_compress();
+    let cdata = cinfo.data_to_vec().unwrap();
+
+    let dinfo = mozjpeg::Decompress::new_mem(&cdata).unwrap();
+    let mut rgb = dinfo.rgb().unwrap();
+    let data: Vec<RGB8> = rgb.read_scanlines().unwrap();
+    rgb.finish_decompress();
+
+    (Img::new(data, image.width(), image.height()), cdata)
 }
 
-impl Jpeg {
-    fn new(path: impl AsRef<Path>) -> Self {
-        let dinfo = Decompress::new_path(path).unwrap();
-        let mut rgb = dinfo.rgb().unwrap();
-        let color_space = rgb.color_space();
-        let width = rgb.width();
-        let height = rgb.height();
-        let data: Vec<RGB8> = rgb.read_scanlines().unwrap();
-        rgb.finish_decompress();
-        Self {
-            width,
-            height,
-            color_space,
-            pixels: data,
-            buffer: Vec::new(),
-        }
+fn read_png(path: impl AsRef<Path>) -> ImgVec<RGB8> {
+    let png = lodepng::decode24_file(path).unwrap();
+    Img::new(png.buffer, png.width, png.height)
+}
+
+fn compress_png(image: ImgRef<RGB8>, quality: u8) -> (ImgVec<RGB8>, Vec<u8>) {
+    let mut liq = imagequant::new();
+    liq.set_quality(0, quality as u32);
+    let rgba: Vec<RGBA8> = image.pixels().map(|c| c.alpha(255)).collect();
+    let ref mut img = liq
+        .new_image(&rgba, image.width(), image.height(), 0.0)
+        .unwrap();
+    let mut res = liq.quantize(&img).unwrap();
+    res.set_dithering_level(1.0);
+    let (palette, pixels) = res.remapped(img).unwrap();
+
+    let mut state = lodepng::State::new();
+    for color in &palette {
+        state.info_raw.palette_add(*color).unwrap();
+        state.info_png.color.palette_add(*color).unwrap();
     }
+    state.info_raw.colortype = lodepng::ColorType::PALETTE;
+    state.info_raw.set_bitdepth(8);
+    state.info_png.color.colortype = lodepng::ColorType::PALETTE;
+    state.info_png.color.set_bitdepth(8);
+    state.set_auto_convert(false);
+    let buffer = state
+        .encode(&pixels, image.width(), image.height())
+        .unwrap();
+
+    let result = pixels.iter().map(|i| palette[*i as usize].rgb()).collect();
+
+    (Img::new(result, image.width(), image.height()), buffer)
 }
 
-impl Image for Jpeg {
-    fn compress(&self, quality: u8) -> Self {
-        let mut cinfo = Compress::new(self.color_space);
-        cinfo.set_size(self.width, self.height);
-        cinfo.set_quality(quality as f32);
-        cinfo.set_mem_dest();
-        cinfo.start_compress();
-        assert!(cinfo.write_scanlines(self.pixels.as_bytes()));
-        cinfo.finish_compress();
-        let cdata = cinfo.data_to_vec().unwrap();
+fn read_webp(path: impl AsRef<Path>) -> ImgVec<RGB8> {
+    let mut file = File::open(path).unwrap();
+    let mut buffer = Vec::new();
+    file.read_to_end(&mut buffer).unwrap();
 
-        let dinfo = Decompress::new_mem(&cdata).unwrap();
-        let mut rgb = dinfo.rgb().unwrap();
-        let data: Vec<RGB8> = rgb.read_scanlines().unwrap();
-        rgb.finish_decompress();
+    let mut width = 0;
+    let mut height = 0;
 
-        Jpeg {
-            width: self.width,
-            height: self.height,
-            color_space: self.color_space,
-            pixels: data,
-            buffer: cdata,
-        }
+    let ret = unsafe { WebPGetInfo(buffer.as_ptr(), buffer.len(), &mut width, &mut height) };
+    assert!(ret != 0);
+
+    let len = (width * height) as usize;
+    let mut data: Vec<RGB8> = Vec::with_capacity(len);
+    unsafe {
+        data.set_len(len);
     }
 
-    fn pixels(&self) -> ImgVec<RGBAPLU> {
-        ImgVec::new(
-            self.pixels
-                .iter()
-                .map(|x| {
-                    RGBA::new(
-                        x.r as f32 / u8::max_value() as f32,
-                        x.g as f32 / u8::max_value() as f32,
-                        x.b as f32 / u8::max_value() as f32,
-                        1.0,
-                    )
-                })
-                .collect(),
-            self.width,
-            self.height,
+    let ret = unsafe {
+        WebPDecodeRGBInto(
+            buffer.as_ptr(),
+            buffer.len(),
+            data.as_mut_ptr() as *mut u8,
+            (3 * width * height) as usize,
+            3 * width,
         )
-    }
+    };
+    assert!(!ret.is_null());
 
-    fn bytes(&self) -> &[u8] {
-        assert!(!self.buffer.is_empty());
-        &self.buffer
-    }
+    Img::new(data, width as usize, height as usize)
 }
 
-struct Png {
-    width: usize,
-    height: usize,
-    pixels: Vec<RGBA<u8, u8>>,
-    buffer: Vec<u8>,
-}
+fn compress_webp(image: ImgRef<RGB8>, quality: u8) -> (ImgVec<RGB8>, Vec<u8>) {
+    unsafe {
+        let mut buffer = Box::into_raw(Box::new(0u8)) as *mut _;
+        let stride = image.width() as i32 * 3;
+        let len = WebPEncodeRGB(
+            image.buf.as_bytes().as_ptr(),
+            image.width() as i32,
+            image.height() as i32,
+            stride,
+            quality as f32,
+            &mut buffer as *mut _,
+        );
+        assert!(len != 0);
 
-impl Png {
-    fn new(path: impl AsRef<Path>) -> Self {
-        let image = lodepng::decode32_file(path).unwrap();
-        Png {
-            width: image.width,
-            height: image.height,
-            pixels: image.buffer,
-            buffer: Vec::new(),
-        }
-    }
-}
+        let capacity = image.width() * image.height();
+        let mut pixels: Vec<RGB8> = Vec::with_capacity(capacity);
+        pixels.set_len(capacity);
 
-impl Image for Png {
-    fn compress(&self, quality: u8) -> Self {
-        let mut liq = imagequant::new();
-        liq.set_quality(0, quality as u32);
-        let ref mut img = liq
-            .new_image(&self.pixels, self.width, self.height, 0.0)
-            .unwrap();
-        let mut res = liq.quantize(&img).unwrap();
-        res.set_dithering_level(1.0);
-        let (palette, pixels) = res.remapped(img).unwrap();
-
-        let mut state = lodepng::State::new();
-        for color in &palette {
-            state.info_raw.palette_add(*color).unwrap();
-            state.info_png.color.palette_add(*color).unwrap();
-        }
-        state.info_raw.colortype = lodepng::ColorType::PALETTE;
-        state.info_raw.set_bitdepth(8);
-        state.info_png.color.colortype = lodepng::ColorType::PALETTE;
-        state.info_png.color.set_bitdepth(8);
-        state.set_auto_convert(false);
-        let buffer = state.encode(&pixels, self.width, self.height).unwrap();
-
-        Self {
-            width: self.width,
-            height: self.height,
-            pixels: pixels.iter().map(|i| palette[*i as usize]).collect(),
+        let ret = WebPDecodeRGBInto(
             buffer,
-        }
-    }
+            len,
+            pixels.as_mut_ptr() as *mut u8,
+            3 * image.width() * image.height(),
+            (3 * image.width()) as i32,
+        );
+        assert!(!ret.is_null());
 
-    fn pixels(&self) -> ImgVec<RGBAPLU> {
-        ImgVec::new(
-            self.pixels
-                .iter()
-                .map(|x| {
-                    RGBA::new(
-                        x.r as f32 / u8::max_value() as f32,
-                        x.g as f32 / u8::max_value() as f32,
-                        x.b as f32 / u8::max_value() as f32,
-                        1.0,
-                        // TODO: x.a as f32 / u8::max_value() as f32
-                    )
-                })
-                .collect(),
-            self.width,
-            self.height,
-        )
-    }
+        let buffer = Vec::from_raw_parts(buffer, len as usize, len as usize);
 
-    fn bytes(&self) -> &[u8] {
-        assert!(!self.buffer.is_empty());
-        &self.buffer
+        (Img::new(pixels, image.width(), image.height()), buffer)
     }
 }
 
-struct WebP {
-    width: usize,
-    height: usize,
-    pixels: *mut u8,
-    buffer: Vec<u8>,
-}
-
-impl WebP {
-    fn new(path: impl AsRef<Path>) -> Self {
-        let mut width = 0;
-        let mut height = 0;
-
-        let mut file = File::open(path).unwrap();
-        let mut buffer = Vec::new();
-        file.read_to_end(&mut buffer).unwrap();
-
-        let pixels =
-            unsafe { WebPDecodeRGB(buffer.as_ptr(), buffer.len(), &mut width, &mut height) };
-        assert!(!pixels.is_null());
-
-        Self {
-            width: width as usize,
-            height: height as usize,
-            pixels,
-            buffer,
-        }
-    }
-}
-
-impl Drop for WebP {
-    fn drop(&mut self) {
-        unsafe {
-            WebPFree(self.pixels as *mut std::ffi::c_void);
-        }
-    }
-}
-
-impl Image for WebP {
-    fn compress(&self, quality: u8) -> Self {
-        unsafe {
-            let mut buffer = Box::into_raw(Box::new(0u8)) as *mut _;
-            let stride = self.width as i32 * 3;
-            let len = WebPEncodeRGB(
-                self.pixels,
-                self.width as i32,
-                self.height as i32,
-                stride,
-                quality as f32,
-                &mut buffer as *mut _,
-            );
-            assert!(len != 0);
-            let pixels = WebPDecodeRGB(buffer, len, std::ptr::null_mut(), std::ptr::null_mut());
-            assert!(!pixels.is_null());
-            Self {
-                width: self.width,
-                height: self.height,
-                pixels,
-                buffer: Vec::from_raw_parts(buffer, len as usize, len as usize),
-            }
-        }
-    }
-
-    fn pixels(&self) -> ImgVec<RGBAPLU> {
-        ImgVec::new(
-            unsafe { slice::from_raw_parts(self.pixels, 3 * self.width * self.height) }
-                .as_rgb()
-                .iter()
-                .map(|x| {
-                    RGBA::new(
-                        x.r as f32 / u8::max_value() as f32,
-                        x.g as f32 / u8::max_value() as f32,
-                        x.b as f32 / u8::max_value() as f32,
-                        1.0,
-                    )
-                })
-                .collect(),
-            self.width,
-            self.height,
-        )
-    }
-
-    fn bytes(&self) -> &[u8] {
-        assert!(!self.buffer.is_empty());
-        &self.buffer
-    }
+fn convert(image: ImgRef<RGB8>) -> ImgVec<RGBAPLU> {
+    ImgVec::new(
+        image
+            .into_iter()
+            .map(|x| {
+                RGBA::new(
+                    x.r as f32 / u8::max_value() as f32,
+                    x.g as f32 / u8::max_value() as f32,
+                    x.b as f32 / u8::max_value() as f32,
+                    1.0,
+                )
+            })
+            .collect(),
+        image.width(),
+        image.height(),
+    )
 }
 
 #[derive(PartialEq)]
@@ -283,7 +178,8 @@ impl Format {
 }
 
 fn compress_image(
-    image: impl Image,
+    image: ImgRef<RGB8>,
+    compressor: impl Fn(ImgRef<RGB8>, u8) -> (ImgVec<RGB8>, Vec<u8>),
     target: f64,
     min_quality: u8,
     max_quality: u8,
@@ -294,27 +190,32 @@ fn compress_image(
     eprintln!("original size {} bytes", original_size);
 
     let attr = Dssim::new();
-    let original = attr.create_image(&image.pixels()).unwrap();
+    let original = attr.create_image(&convert(image)).unwrap();
 
     let mut min = min_quality;
     let mut max = max_quality;
     let mut compressed;
+    let mut buffer;
 
     loop {
         let quality = (min + max) / 2;
-        compressed = image.compress(quality);
+        let (a, b) = compressor(image, quality);
+        compressed = a;
+        buffer = b;
 
         let mut attr = Dssim::new();
-        let (dssim, _ssim_maps) =
-            attr.compare(&original, attr.create_image(&compressed.pixels()).unwrap());
+        let (dssim, _ssim_maps) = attr.compare(
+            &original,
+            attr.create_image(&convert(compressed.as_ref())).unwrap(),
+        );
         eprintln!(
             "range {} - {} quality {}, SSIM {:.6} {} bytes, {} % of original",
             min,
             max,
             quality,
             dssim,
-            compressed.bytes().len(),
-            100 * compressed.bytes().len() as u64 / original_size
+            buffer.len(),
+            100 * buffer.len() as u64 / original_size
         );
 
         if dssim > target {
@@ -328,9 +229,9 @@ fn compress_image(
         }
     }
 
-    if compressed.bytes().len() < original_size as usize {
+    if buffer.len() < original_size as usize {
         let mut output = File::create(output_path).unwrap();
-        output.write_all(compressed.bytes()).unwrap();
+        output.write_all(&buffer).unwrap();
     } else {
         eprintln!("Failed to optimize the input image, copying the input image to output...");
         fs::copy(input_path, output_path).unwrap();
@@ -428,41 +329,34 @@ fn main() {
         }
     };
 
-    assert!(input_format == output_format);
-
     let target = matches.value_of("target").unwrap().parse().unwrap();
 
-    let min: u8 = matches.value_of("min").unwrap().parse().unwrap();
-    let max: u8 = matches.value_of("max").unwrap().parse().unwrap();
+    let min = matches.value_of("min").unwrap().parse().unwrap();
+    let max = matches.value_of("max").unwrap().parse().unwrap();
     if min > max {
         eprintln!("min must be smaller or equal to max");
         std::process::exit(1);
     }
 
-    match input_format {
-        Format::JPEG => compress_image(
-            Jpeg::new(input_path),
-            target,
-            min,
-            max,
-            input_path,
-            output_path,
-        ),
-        Format::PNG => compress_image(
-            Png::new(input_path),
-            target,
-            min,
-            max,
-            input_path,
-            output_path,
-        ),
-        Format::WEBP => compress_image(
-            WebP::new(input_path),
-            target,
-            min,
-            max,
-            input_path,
-            output_path,
-        ),
+    let input_image = match input_format {
+        Format::JPEG => read_jpeg(input_path),
+        Format::PNG => read_png(input_path),
+        Format::WEBP => read_webp(input_path),
     };
+
+    let compressor = match output_format {
+        Format::JPEG => compress_jpeg,
+        Format::PNG => compress_png,
+        Format::WEBP => compress_webp,
+    };
+
+    compress_image(
+        input_image.as_ref(),
+        compressor,
+        target,
+        min,
+        max,
+        input_path,
+        output_path,
+    );
 }

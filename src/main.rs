@@ -328,8 +328,13 @@ fn compress_image(
         }
     }
 
-    let mut output = File::create(output_path).unwrap();
-    output.write_all(compressed.bytes()).unwrap();
+    if compressed.bytes().len() < original_size as usize {
+        let mut output = File::create(output_path).unwrap();
+        output.write_all(compressed.bytes()).unwrap();
+    } else {
+        eprintln!("Failed to optimize the input image, copying the input image to output...");
+        fs::copy(input_path, output_path).unwrap();
+    }
 }
 
 fn validate_target(x: String) -> Result<(), String> {

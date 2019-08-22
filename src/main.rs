@@ -5,60 +5,77 @@ use clap::{App, Arg};
 use dssim::{Dssim, RGBAPLU};
 use imgref::{Img, ImgRef, ImgVec};
 use libwebp_sys::*;
-use mozjpeg;
 use rgb::{ComponentBytes, RGB8, RGBA, RGBA8};
 
 use std::fs;
 use std::path::Path;
 
-fn read_jpeg(path: impl AsRef<Path>) -> ImgVec<RGB8> {
-    let dinfo = mozjpeg::Decompress::new_path(path).unwrap();
-    let mut rgb = dinfo.rgb().unwrap();
+type ReadResult = Result<ImgVec<RGB8>, String>;
+type CompressResult = Result<(ImgVec<RGB8>, Vec<u8>), String>;
+
+fn read_jpeg(path: impl AsRef<Path>) -> ReadResult {
+    let dinfo = mozjpeg::Decompress::new_path(path).map_err(|err| err.to_string())?;
+    let mut rgb = dinfo.rgb().map_err(|err| err.to_string())?;
     let width = rgb.width();
     let height = rgb.height();
-    let data: Vec<RGB8> = rgb.read_scanlines().unwrap();
+    let data: Vec<RGB8> = rgb
+        .read_scanlines()
+        .ok_or_else(|| "Failed decode image data".to_string())?;
     rgb.finish_decompress();
-    Img::new(data, width, height)
+    Ok(Img::new(data, width, height))
 }
 
-fn compress_jpeg(image: ImgRef<RGB8>, quality: u8) -> (ImgVec<RGB8>, Vec<u8>) {
+fn compress_jpeg(image: ImgRef<RGB8>, quality: u8) -> CompressResult {
     let mut cinfo = mozjpeg::Compress::new(mozjpeg::ColorSpace::JCS_RGB);
     cinfo.set_size(image.width(), image.height());
     cinfo.set_quality(quality as f32);
     cinfo.set_mem_dest();
     cinfo.start_compress();
-    assert!(cinfo.write_scanlines(image.buf.as_bytes()));
+    if !cinfo.write_scanlines(image.buf.as_bytes()) {
+        return Err("Failed to compress image data".to_string());
+    }
     cinfo.finish_compress();
-    let cdata = cinfo.data_to_vec().unwrap();
+    let cdata = cinfo
+        .data_to_vec()
+        .map_err(|_err| "Failed to compress image".to_string())?;
 
-    let dinfo = mozjpeg::Decompress::new_mem(&cdata).unwrap();
-    let mut rgb = dinfo.rgb().unwrap();
-    let data: Vec<RGB8> = rgb.read_scanlines().unwrap();
+    let dinfo = mozjpeg::Decompress::new_mem(&cdata).map_err(|err| err.to_string())?;
+    let mut rgb = dinfo.rgb().map_err(|err| err.to_string())?;
+    let data: Vec<RGB8> = rgb
+        .read_scanlines()
+        .ok_or_else(|| "Failed to decode image data".to_string())?;
     rgb.finish_decompress();
 
-    (Img::new(data, image.width(), image.height()), cdata)
+    Ok((Img::new(data, image.width(), image.height()), cdata))
 }
 
-fn read_png(path: impl AsRef<Path>) -> ImgVec<RGB8> {
-    let png = lodepng::decode24_file(path).unwrap();
-    Img::new(png.buffer, png.width, png.height)
+fn read_png(path: impl AsRef<Path>) -> ReadResult {
+    let png = lodepng::decode24_file(path).map_err(|err| err.to_string())?;
+    Ok(Img::new(png.buffer, png.width, png.height))
 }
 
-fn compress_png(image: ImgRef<RGB8>, quality: u8) -> (ImgVec<RGB8>, Vec<u8>) {
+fn compress_png(image: ImgRef<RGB8>, quality: u8) -> CompressResult {
     let mut liq = imagequant::new();
     liq.set_quality(0, quality as u32);
     let rgba: Vec<RGBA8> = image.pixels().map(|c| c.alpha(255)).collect();
     let ref mut img = liq
         .new_image(&rgba, image.width(), image.height(), 0.0)
-        .unwrap();
-    let mut res = liq.quantize(&img).unwrap();
+        .map_err(|err| err.to_string())?;
+    let mut res = liq.quantize(&img).map_err(|err| err.to_string())?;
     res.set_dithering_level(1.0);
-    let (palette, pixels) = res.remapped(img).unwrap();
+    let (palette, pixels) = res.remapped(img).map_err(|err| err.to_string())?;
 
     let mut state = lodepng::State::new();
     for color in &palette {
-        state.info_raw.palette_add(*color).unwrap();
-        state.info_png.color.palette_add(*color).unwrap();
+        state
+            .info_raw
+            .palette_add(*color)
+            .map_err(|err| err.to_string())?;
+        state
+            .info_png
+            .color
+            .palette_add(*color)
+            .map_err(|err| err.to_string())?;
     }
     state.info_raw.colortype = lodepng::ColorType::PALETTE;
     state.info_raw.set_bitdepth(8);
@@ -67,21 +84,23 @@ fn compress_png(image: ImgRef<RGB8>, quality: u8) -> (ImgVec<RGB8>, Vec<u8>) {
     state.set_auto_convert(false);
     let buffer = state
         .encode(&pixels, image.width(), image.height())
-        .unwrap();
+        .map_err(|err| err.to_string())?;
 
     let result = pixels.iter().map(|i| palette[*i as usize].rgb()).collect();
 
-    (Img::new(result, image.width(), image.height()), buffer)
+    Ok((Img::new(result, image.width(), image.height()), buffer))
 }
 
-fn read_webp(path: impl AsRef<Path>) -> ImgVec<RGB8> {
-    let data = fs::read(path).unwrap();
+fn read_webp(path: impl AsRef<Path>) -> ReadResult {
+    let data = fs::read(path).map_err(|err| err.to_string())?;
 
     let mut width = 0;
     let mut height = 0;
 
     let ret = unsafe { WebPGetInfo(data.as_ptr(), data.len(), &mut width, &mut height) };
-    assert!(ret != 0);
+    if ret == 0 {
+        return Err("Failed to decode file".to_string());
+    }
 
     let len = (width * height) as usize;
     let mut buffer: Vec<RGB8> = Vec::with_capacity(len);
@@ -98,12 +117,14 @@ fn read_webp(path: impl AsRef<Path>) -> ImgVec<RGB8> {
             3 * width,
         )
     };
-    assert!(!ret.is_null());
+    if ret.is_null() {
+        return Err("Failed to decode image data".to_string());
+    }
 
-    Img::new(buffer, width as usize, height as usize)
+    Ok(Img::new(buffer, width as usize, height as usize))
 }
 
-fn compress_webp(image: ImgRef<RGB8>, quality: u8) -> (ImgVec<RGB8>, Vec<u8>) {
+fn compress_webp(image: ImgRef<RGB8>, quality: u8) -> CompressResult {
     unsafe {
         let mut buffer = Box::into_raw(Box::new(0u8)) as *mut _;
         let stride = image.width() as i32 * 3;
@@ -115,7 +136,9 @@ fn compress_webp(image: ImgRef<RGB8>, quality: u8) -> (ImgVec<RGB8>, Vec<u8>) {
             quality as f32,
             &mut buffer as *mut _,
         );
-        assert!(len != 0);
+        if len == 0 {
+            return Err("Failed to encode image data".to_string());
+        }
 
         let capacity = image.width() * image.height();
         let mut pixels: Vec<RGB8> = Vec::with_capacity(capacity);
@@ -128,12 +151,14 @@ fn compress_webp(image: ImgRef<RGB8>, quality: u8) -> (ImgVec<RGB8>, Vec<u8>) {
             3 * image.width() * image.height(),
             (3 * image.width()) as i32,
         );
-        assert!(!ret.is_null());
+        if ret.is_null() {
+            return Err("Failed to decode image data".to_string());
+        }
 
         // XXX: Not safe because `buffer` is not allocated by `Vec`
         let buffer = Vec::from_raw_parts(buffer, len as usize, len as usize);
 
-        (Img::new(pixels, image.width(), image.height()), buffer)
+        Ok((Img::new(pixels, image.width(), image.height()), buffer))
     }
 }
 
@@ -177,18 +202,22 @@ impl Format {
 
 fn compress_image(
     image: ImgRef<RGB8>,
-    compressor: impl Fn(ImgRef<RGB8>, u8) -> (ImgVec<RGB8>, Vec<u8>),
+    compressor: impl Fn(ImgRef<RGB8>, u8) -> CompressResult,
     target: f64,
     min_quality: u8,
     max_quality: u8,
     input_path: &Path,
     output_path: &Path,
-) {
-    let original_size = fs::metadata(&input_path).unwrap().len();
+) -> Result<(), String> {
+    let original_size = fs::metadata(&input_path)
+        .map_err(|err| err.to_string())?
+        .len();
     eprintln!("original size {} bytes", original_size);
 
     let attr = Dssim::new();
-    let original = attr.create_image(&convert(image)).unwrap();
+    let original = attr
+        .create_image(&convert(image))
+        .ok_or_else(|| "Failed to create DSSIM image".to_string())?;
 
     let mut min = min_quality;
     let mut max = max_quality;
@@ -197,14 +226,15 @@ fn compress_image(
 
     loop {
         let quality = (min + max) / 2;
-        let (a, b) = compressor(image, quality);
+        let (a, b) = compressor(image, quality)?;
         compressed = a;
         buffer = b;
 
         let mut attr = Dssim::new();
         let (dssim, _ssim_maps) = attr.compare(
             &original,
-            attr.create_image(&convert(compressed.as_ref())).unwrap(),
+            attr.create_image(&convert(compressed.as_ref()))
+                .ok_or_else(|| "Failed create DSSIM image")?,
         );
         eprintln!(
             "range {} - {} quality {}, SSIM {:.6} {} bytes, {} % of original",
@@ -228,11 +258,13 @@ fn compress_image(
     }
 
     if buffer.len() < original_size as usize {
-        fs::write(output_path, buffer).unwrap();
+        fs::write(output_path, buffer).map_err(|err| err.to_string())?;
     } else {
         eprintln!("Failed to optimize the input image, copying the input image to output...");
-        fs::copy(input_path, output_path).unwrap();
+        fs::copy(input_path, output_path).map_err(|err| err.to_string())?;
     }
+
+    Ok(())
 }
 
 fn validate_target(x: String) -> Result<(), String> {
@@ -335,10 +367,16 @@ fn main() {
         std::process::exit(1);
     }
 
-    let input_image = match input_format {
+    let input_image = match match input_format {
         Format::JPEG => read_jpeg(input_path),
         Format::PNG => read_png(input_path),
         Format::WEBP => read_webp(input_path),
+    } {
+        Ok(image) => image,
+        Err(err) => {
+            eprintln!("Failed to read input: {}", err);
+            std::process::exit(1);
+        }
     };
 
     let compressor = match output_format {
@@ -347,7 +385,7 @@ fn main() {
         Format::WEBP => compress_webp,
     };
 
-    compress_image(
+    if let Err(err) = compress_image(
         input_image.as_ref(),
         compressor,
         target,
@@ -355,5 +393,8 @@ fn main() {
         max,
         input_path,
         output_path,
-    );
+    ) {
+        eprintln!("Failed to compress image: {}", err);
+        std::process::exit(1);
+    }
 }

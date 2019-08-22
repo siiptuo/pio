@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 use clap::{App, Arg};
-use dssim::{Dssim, RGBAPLU};
+use dssim::{Dssim, ToRGBAPLU, RGBAPLU};
 use imgref::{Img, ImgRef, ImgVec};
 use libwebp_sys::*;
-use rgb::{ComponentBytes, RGB8, RGBA, RGBA8};
+use rgb::{ComponentBytes, RGB8, RGBA8};
 
 use std::fs;
 use std::path::Path;
@@ -163,21 +163,7 @@ fn compress_webp(image: ImgRef<RGB8>, quality: u8) -> CompressResult {
 }
 
 fn convert(image: ImgRef<RGB8>) -> ImgVec<RGBAPLU> {
-    ImgVec::new(
-        image
-            .into_iter()
-            .map(|x| {
-                RGBA::new(
-                    x.r as f32 / u8::max_value() as f32,
-                    x.g as f32 / u8::max_value() as f32,
-                    x.b as f32 / u8::max_value() as f32,
-                    1.0,
-                )
-            })
-            .collect(),
-        image.width(),
-        image.height(),
-    )
+    Img::new(image.buf.to_rgbaplu(), image.width(), image.height())
 }
 
 #[derive(PartialEq)]

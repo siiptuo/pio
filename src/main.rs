@@ -8,8 +8,7 @@ use libwebp_sys::*;
 use mozjpeg;
 use rgb::{ComponentBytes, RGB8, RGBA, RGBA8};
 
-use std::fs::{self, File};
-use std::io::prelude::*;
+use std::fs;
 use std::path::Path;
 
 fn read_jpeg(path: impl AsRef<Path>) -> ImgVec<RGB8> {
@@ -76,34 +75,32 @@ fn compress_png(image: ImgRef<RGB8>, quality: u8) -> (ImgVec<RGB8>, Vec<u8>) {
 }
 
 fn read_webp(path: impl AsRef<Path>) -> ImgVec<RGB8> {
-    let mut file = File::open(path).unwrap();
-    let mut buffer = Vec::new();
-    file.read_to_end(&mut buffer).unwrap();
+    let data = fs::read(path).unwrap();
 
     let mut width = 0;
     let mut height = 0;
 
-    let ret = unsafe { WebPGetInfo(buffer.as_ptr(), buffer.len(), &mut width, &mut height) };
+    let ret = unsafe { WebPGetInfo(data.as_ptr(), data.len(), &mut width, &mut height) };
     assert!(ret != 0);
 
     let len = (width * height) as usize;
-    let mut data: Vec<RGB8> = Vec::with_capacity(len);
+    let mut buffer: Vec<RGB8> = Vec::with_capacity(len);
     unsafe {
-        data.set_len(len);
+        buffer.set_len(len);
     }
 
     let ret = unsafe {
         WebPDecodeRGBInto(
-            buffer.as_ptr(),
-            buffer.len(),
-            data.as_mut_ptr() as *mut u8,
+            data.as_ptr(),
+            data.len(),
+            buffer.as_mut_ptr() as *mut u8,
             (3 * width * height) as usize,
             3 * width,
         )
     };
     assert!(!ret.is_null());
 
-    Img::new(data, width as usize, height as usize)
+    Img::new(buffer, width as usize, height as usize)
 }
 
 fn compress_webp(image: ImgRef<RGB8>, quality: u8) -> (ImgVec<RGB8>, Vec<u8>) {
@@ -133,6 +130,7 @@ fn compress_webp(image: ImgRef<RGB8>, quality: u8) -> (ImgVec<RGB8>, Vec<u8>) {
         );
         assert!(!ret.is_null());
 
+        // XXX: Not safe because `buffer` is not allocated by `Vec`
         let buffer = Vec::from_raw_parts(buffer, len as usize, len as usize);
 
         (Img::new(pixels, image.width(), image.height()), buffer)
@@ -230,8 +228,7 @@ fn compress_image(
     }
 
     if buffer.len() < original_size as usize {
-        let mut output = File::create(output_path).unwrap();
-        output.write_all(&buffer).unwrap();
+        fs::write(output_path, buffer).unwrap();
     } else {
         eprintln!("Failed to optimize the input image, copying the input image to output...");
         fs::copy(input_path, output_path).unwrap();

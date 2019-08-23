@@ -189,32 +189,16 @@ impl Format {
 fn compress_image(
     image: ImgRef<RGB8>,
     compressor: impl Fn(ImgRef<RGB8>, u8) -> CompressResult,
-    target: f64,
-    min_quality: u8,
-    max_quality: u8,
-    input_path: &Path,
-    output_path: &Path,
 ) -> Result<(), String> {
-    let original_size = fs::metadata(&input_path)
-        .map_err(|err| err.to_string())?
-        .len();
-    eprintln!("original size {} bytes", original_size);
+    println!("quality,ssim,size");
 
     let attr = Dssim::new();
     let original = attr
         .create_image(&convert(image))
         .ok_or_else(|| "Failed to create DSSIM image".to_string())?;
 
-    let mut min = min_quality;
-    let mut max = max_quality;
-    let mut compressed;
-    let mut buffer;
-
-    loop {
-        let quality = (min + max) / 2;
-        let (a, b) = compressor(image, quality)?;
-        compressed = a;
-        buffer = b;
+    for quality in 0..=100 {
+        let (compressed, buffer) = compressor(image, quality)?;
 
         let mut attr = Dssim::new();
         let (dssim, _ssim_maps) = attr.compare(
@@ -222,61 +206,10 @@ fn compress_image(
             attr.create_image(&convert(compressed.as_ref()))
                 .ok_or_else(|| "Failed create DSSIM image")?,
         );
-        eprintln!(
-            "range {} - {} quality {}, SSIM {:.6} {} bytes, {} % of original",
-            min,
-            max,
-            quality,
-            dssim,
-            buffer.len(),
-            100 * buffer.len() as u64 / original_size
-        );
-
-        if dssim > target {
-            min = quality + 1;
-        } else {
-            max = quality - 1;
-        }
-
-        if min > max {
-            break;
-        }
-    }
-
-    if buffer.len() < original_size as usize {
-        fs::write(output_path, buffer).map_err(|err| err.to_string())?;
-    } else {
-        eprintln!("Failed to optimize the input image, copying the input image to output...");
-        fs::copy(input_path, output_path).map_err(|err| err.to_string())?;
+        println!("{},{},{}", quality, dssim, buffer.len());
     }
 
     Ok(())
-}
-
-fn validate_target(x: String) -> Result<(), String> {
-    match x.parse::<f64>() {
-        Ok(x) => {
-            if x >= 0.0 {
-                Ok(())
-            } else {
-                Err("expected value between 0.0 and infinity".to_string())
-            }
-        }
-        Err(_) => Err("expected value between 0.0 and infinity".to_string()),
-    }
-}
-
-fn validate_quality(x: String) -> Result<(), String> {
-    match x.parse::<i8>() {
-        Ok(x) => {
-            if x >= 0 || x <= 100 {
-                Ok(())
-            } else {
-                Err("expected value between 0 and 100".to_string())
-            }
-        }
-        Err(_) => Err("expected value between 0 and 100".to_string()),
-    }
 }
 
 fn main() {
@@ -294,33 +227,6 @@ fn main() {
                 .help("Set the output file to use")
                 .required(true)
                 .index(2),
-        )
-        .arg(
-            Arg::with_name("target")
-                .long("target")
-                .value_name("SSIM")
-                .help("Set the target SSIM")
-                .takes_value(true)
-                .default_value("0.01")
-                .validator(validate_target),
-        )
-        .arg(
-            Arg::with_name("min")
-                .long("min")
-                .value_name("quality")
-                .help("Sets the minimum quality for output")
-                .takes_value(true)
-                .default_value("40")
-                .validator(validate_quality),
-        )
-        .arg(
-            Arg::with_name("max")
-                .long("max")
-                .value_name("quality")
-                .help("Sets the maximum quality for output")
-                .takes_value(true)
-                .default_value("95")
-                .validator(validate_quality),
         )
         .get_matches();
 
@@ -344,15 +250,6 @@ fn main() {
         }
     };
 
-    let target = matches.value_of("target").unwrap().parse().unwrap();
-
-    let min = matches.value_of("min").unwrap().parse().unwrap();
-    let max = matches.value_of("max").unwrap().parse().unwrap();
-    if min > max {
-        eprintln!("min must be smaller or equal to max");
-        std::process::exit(1);
-    }
-
     let input_image = match match input_format {
         Format::JPEG => read_jpeg(input_path),
         Format::PNG => read_png(input_path),
@@ -371,15 +268,7 @@ fn main() {
         Format::WEBP => compress_webp,
     };
 
-    if let Err(err) = compress_image(
-        input_image.as_ref(),
-        compressor,
-        target,
-        min,
-        max,
-        input_path,
-        output_path,
-    ) {
+    if let Err(err) = compress_image(input_image.as_ref(), compressor) {
         eprintln!("Failed to compress image: {}", err);
         std::process::exit(1);
     }

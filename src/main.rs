@@ -126,19 +126,50 @@ fn read_webp(path: impl AsRef<Path>) -> ReadResult {
 
 fn compress_webp(image: ImgRef<RGB8>, quality: u8) -> CompressResult {
     unsafe {
-        let mut buffer = Box::into_raw(Box::new(0u8)) as *mut _;
         let stride = image.width() as i32 * 3;
-        let len = WebPEncodeRGB(
-            image.buf.as_bytes().as_ptr(),
-            image.width() as i32,
-            image.height() as i32,
-            stride,
+
+        let mut config: WebPConfig = std::mem::uninitialized();
+        let ret = WebPConfigInitInternal(
+            &mut config,
+            WebPPreset::WEBP_PRESET_DEFAULT,
             quality as f32,
-            &mut buffer as *mut _,
+            WEBP_ENCODER_ABI_VERSION as i32,
         );
-        if len == 0 {
+        if ret == 0 {
+            return Err("libwebp version mismatch".to_string());
+        }
+        config.method = 6;
+
+        let mut wrt: WebPMemoryWriter = std::mem::uninitialized();
+
+        let mut pic: WebPPicture = std::mem::uninitialized();
+        WebPPictureInitInternal(&mut pic, WEBP_ENCODER_ABI_VERSION as i32);
+        if ret == 0 {
+            return Err("libwebp version mismatch".to_string());
+        }
+        pic.width = image.width() as i32;
+        pic.height = image.height() as i32;
+        pic.writer = Some(WebPMemoryWrite);
+        pic.custom_ptr = &mut wrt as *mut _ as *mut std::ffi::c_void;
+        WebPMemoryWriterInit(&mut wrt);
+
+        let ret = WebPPictureImportRGB(&mut pic, image.buf.as_bytes().as_ptr(), stride);
+        if ret == 0 {
+            WebPPictureFree(&mut pic);
+            WebPMemoryWriterClear(&mut wrt);
+            return Err("Failed to import image data".to_string());
+        }
+
+        let ret = WebPEncode(&config, &mut pic);
+        WebPPictureFree(&mut pic);
+
+        if ret == 0 {
+            WebPMemoryWriterClear(&mut wrt);
             return Err("Failed to encode image data".to_string());
         }
+
+        let buffer = wrt.mem;
+        let len = wrt.size;
 
         let capacity = image.width() * image.height();
         let mut pixels: Vec<RGB8> = Vec::with_capacity(capacity);

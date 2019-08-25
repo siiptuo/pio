@@ -289,7 +289,9 @@ fn compress_image(
         fs::write(output_path, buffer).map_err(|err| err.to_string())?;
     } else {
         eprintln!("Failed to optimize the input image, copying the input image to output...");
-        fs::copy(input_path, output_path).map_err(|err| err.to_string())?;
+        if input_path != output_path {
+            fs::copy(input_path, output_path).map_err(|err| err.to_string())?;
+        }
     }
 
     Ok(())

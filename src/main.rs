@@ -240,7 +240,6 @@ fn compress_image(
     let original_size = fs::metadata(&input_path)
         .map_err(|err| err.to_string())?
         .len();
-    eprintln!("original size {} bytes", original_size);
 
     let attr = Dssim::new();
     let original = attr
@@ -258,19 +257,33 @@ fn compress_image(
         compressed = a;
         buffer = b;
 
+        for x in 0..=100 / 4 {
+            if x == quality / 4 {
+                eprint!("O")
+            } else if x == 0 || x == 100 / 4 {
+                eprint!("|");
+            } else if x == min / 4 {
+                eprint!("[");
+            } else if x == max / 4 {
+                eprint!("]");
+            } else if x > min / 4 && x < max / 4 {
+                eprint!("-");
+            } else {
+                eprint!(" ");
+            }
+        }
+
         let mut attr = Dssim::new();
         let (dssim, _ssim_maps) = attr.compare(
             &original,
             attr.create_image(&convert(compressed.as_ref()))
                 .ok_or_else(|| "Failed create DSSIM image")?,
         );
+
         eprintln!(
-            "range {} - {} quality {}, SSIM {:.6} {} bytes, {} % of original",
-            min,
-            max,
+            " {:>3} quality  {:.6} SSIM  {:>3} % of original",
             quality,
             dssim,
-            buffer.len(),
             100 * buffer.len() as u64 / original_size
         );
 

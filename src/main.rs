@@ -10,28 +10,29 @@ use rgb::{ComponentBytes, RGB8, RGBA8};
 use std::fs;
 use std::path::Path;
 
-type ReadResult = Result<ImgVec<RGB8>, String>;
-type CompressResult = Result<(ImgVec<RGB8>, Vec<u8>), String>;
+type ReadResult = Result<ImgVec<RGBA8>, String>;
+type CompressResult = Result<(ImgVec<RGBA8>, Vec<u8>), String>;
 
 fn read_jpeg(path: impl AsRef<Path>) -> ReadResult {
     let dinfo = mozjpeg::Decompress::new_path(path).map_err(|err| err.to_string())?;
     let mut rgb = dinfo.rgb().map_err(|err| err.to_string())?;
     let width = rgb.width();
     let height = rgb.height();
-    let data: Vec<RGB8> = rgb
+    let data: Vec<RGBA8> = rgb
         .read_scanlines()
         .ok_or_else(|| "Failed decode image data".to_string())?;
     rgb.finish_decompress();
     Ok(Img::new(data, width, height))
 }
 
-fn compress_jpeg(image: ImgRef<RGB8>, quality: u8) -> CompressResult {
+fn compress_jpeg(image: ImgRef<RGBA8>, quality: u8) -> CompressResult {
     let mut cinfo = mozjpeg::Compress::new(mozjpeg::ColorSpace::JCS_RGB);
     cinfo.set_size(image.width(), image.height());
     cinfo.set_quality(quality as f32);
     cinfo.set_mem_dest();
     cinfo.start_compress();
-    if !cinfo.write_scanlines(image.buf.as_bytes()) {
+    let rgb: Vec<RGB8> = image.pixels().map(|c| c.rgb()).collect();
+    if !cinfo.write_scanlines(rgb.as_bytes()) {
         return Err("Failed to compress image data".to_string());
     }
     cinfo.finish_compress();
@@ -46,20 +47,26 @@ fn compress_jpeg(image: ImgRef<RGB8>, quality: u8) -> CompressResult {
         .ok_or_else(|| "Failed to decode image data".to_string())?;
     rgb.finish_decompress();
 
-    Ok((Img::new(data, image.width(), image.height()), cdata))
+    Ok((
+        Img::new(
+            data.iter().map(|c| c.alpha(255)).collect(),
+            image.width(),
+            image.height(),
+        ),
+        cdata,
+    ))
 }
 
 fn read_png(path: impl AsRef<Path>) -> ReadResult {
-    let png = lodepng::decode24_file(path).map_err(|err| err.to_string())?;
+    let png = lodepng::decode32_file(path).map_err(|err| err.to_string())?;
     Ok(Img::new(png.buffer, png.width, png.height))
 }
 
-fn compress_png(image: ImgRef<RGB8>, quality: u8) -> CompressResult {
+fn compress_png(image: ImgRef<RGBA8>, quality: u8) -> CompressResult {
     let mut liq = imagequant::new();
     liq.set_quality(0, quality as u32);
-    let rgba: Vec<RGBA8> = image.pixels().map(|c| c.alpha(255)).collect();
     let ref mut img = liq
-        .new_image(&rgba, image.width(), image.height(), 0.0)
+        .new_image(&image.buf, image.width(), image.height(), 0.0)
         .map_err(|err| err.to_string())?;
     let mut res = liq.quantize(&img).map_err(|err| err.to_string())?;
     res.set_dithering_level(1.0);
@@ -86,7 +93,7 @@ fn compress_png(image: ImgRef<RGB8>, quality: u8) -> CompressResult {
         .encode(&pixels, image.width(), image.height())
         .map_err(|err| err.to_string())?;
 
-    let result = pixels.iter().map(|i| palette[*i as usize].rgb()).collect();
+    let result = pixels.iter().map(|i| palette[*i as usize]).collect();
 
     Ok((Img::new(result, image.width(), image.height()), buffer))
 }
@@ -103,18 +110,18 @@ fn read_webp(path: impl AsRef<Path>) -> ReadResult {
     }
 
     let len = (width * height) as usize;
-    let mut buffer: Vec<RGB8> = Vec::with_capacity(len);
+    let mut buffer: Vec<RGBA8> = Vec::with_capacity(len);
     unsafe {
         buffer.set_len(len);
     }
 
     let ret = unsafe {
-        WebPDecodeRGBInto(
+        WebPDecodeRGBAInto(
             data.as_ptr(),
             data.len(),
             buffer.as_mut_ptr() as *mut u8,
-            (3 * width * height) as usize,
-            3 * width,
+            (4 * width * height) as usize,
+            4 * width,
         )
     };
     if ret.is_null() {
@@ -124,9 +131,9 @@ fn read_webp(path: impl AsRef<Path>) -> ReadResult {
     Ok(Img::new(buffer, width as usize, height as usize))
 }
 
-fn compress_webp(image: ImgRef<RGB8>, quality: u8) -> CompressResult {
+fn compress_webp(image: ImgRef<RGBA8>, quality: u8) -> CompressResult {
     unsafe {
-        let stride = image.width() as i32 * 3;
+        let stride = image.width() as i32 * 4;
 
         let mut config: WebPConfig = std::mem::uninitialized();
         let ret = WebPConfigInitInternal(
@@ -153,7 +160,7 @@ fn compress_webp(image: ImgRef<RGB8>, quality: u8) -> CompressResult {
         pic.custom_ptr = &mut wrt as *mut _ as *mut std::ffi::c_void;
         WebPMemoryWriterInit(&mut wrt);
 
-        let ret = WebPPictureImportRGB(&mut pic, image.buf.as_bytes().as_ptr(), stride);
+        let ret = WebPPictureImportRGBA(&mut pic, image.buf.as_bytes().as_ptr(), stride);
         if ret == 0 {
             WebPPictureFree(&mut pic);
             WebPMemoryWriterClear(&mut wrt);
@@ -172,15 +179,15 @@ fn compress_webp(image: ImgRef<RGB8>, quality: u8) -> CompressResult {
         let len = wrt.size;
 
         let capacity = image.width() * image.height();
-        let mut pixels: Vec<RGB8> = Vec::with_capacity(capacity);
+        let mut pixels: Vec<RGBA8> = Vec::with_capacity(capacity);
         pixels.set_len(capacity);
 
         let ret = WebPDecodeRGBInto(
             buffer,
             len,
             pixels.as_mut_ptr() as *mut u8,
-            3 * image.width() * image.height(),
-            (3 * image.width()) as i32,
+            4 * image.width() * image.height(),
+            (4 * image.width()) as i32,
         );
         if ret.is_null() {
             return Err("Failed to decode image data".to_string());
@@ -193,7 +200,7 @@ fn compress_webp(image: ImgRef<RGB8>, quality: u8) -> CompressResult {
     }
 }
 
-fn convert(image: ImgRef<RGB8>) -> ImgVec<RGBAPLU> {
+fn convert(image: ImgRef<RGBA8>) -> ImgVec<RGBAPLU> {
     Img::new(image.buf.to_rgbaplu(), image.width(), image.height())
 }
 
@@ -218,8 +225,8 @@ impl Format {
 }
 
 fn compress_image(
-    image: ImgRef<RGB8>,
-    compressor: impl Fn(ImgRef<RGB8>, u8) -> CompressResult,
+    image: ImgRef<RGBA8>,
+    compressor: impl Fn(ImgRef<RGBA8>, u8) -> CompressResult,
     target: f64,
     min_quality: u8,
     max_quality: u8,

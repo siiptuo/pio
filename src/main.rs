@@ -186,7 +186,7 @@ fn compress_webp(image: ImgRef<RGBA8>, quality: u8) -> CompressResult {
         let mut pixels: Vec<RGBA8> = Vec::with_capacity(capacity);
         pixels.set_len(capacity);
 
-        let ret = WebPDecodeRGBInto(
+        let ret = WebPDecodeRGBAInto(
             buffer,
             len,
             pixels.as_mut_ptr() as *mut u8,

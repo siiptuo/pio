@@ -18,11 +18,15 @@ fn read_jpeg(path: impl AsRef<Path>) -> ReadResult {
     let mut rgb = dinfo.rgb().map_err(|err| err.to_string())?;
     let width = rgb.width();
     let height = rgb.height();
-    let data: Vec<RGBA8> = rgb
+    let data: Vec<RGB8> = rgb
         .read_scanlines()
         .ok_or_else(|| "Failed decode image data".to_string())?;
     rgb.finish_decompress();
-    Ok(Img::new(data, width, height))
+    Ok(Img::new(
+        data.iter().map(|c| c.alpha(255)).collect(),
+        width,
+        height,
+    ))
 }
 
 fn compress_jpeg(image: ImgRef<RGBA8>, quality: u8) -> CompressResult {

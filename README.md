@@ -43,6 +43,20 @@ $ pio --target 0.001 input.jpeg output.jpeg
 
 The target is a SSIM value between 0.0 and infinity where 0.0 means identical images.
 
+## Related projects
+
+- [pio-loader](https://github.com/siiptuo/pio-loader): Webpack loader
+
+## Alternatives
+
+`pio` is not really doing anything new and there are many similar projects including
+
+- [imager](https://github.com/imager-io/imager)
+- [imgmin](https://github.com/rflynn/imgmin)
+- [jpeg-archive](https://github.com/danielgtaylor/jpeg-archive/)
+- [optimal-image](https://github.com/optimal-image/optimal-image)
+- [webp-recompress](https://github.com/AgentCosmic/webp-recompress)
+
 ## License
 
 GNU Affero General Public License version 3 or later

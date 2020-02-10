@@ -11,6 +11,12 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 `pio` is a command-line utility to compress image files while maintaining the same perceived quality.
 It's designed to automatically optimize images for the web.
 
+## Features
+
+- Optimize images automatically for the web
+- Supports PNG, JPEG and WebP
+- Easily installable statically linked binary
+
 ## Background
 
 Images are an important part of the web but they usually use a lot of bandwidth.
@@ -29,23 +35,24 @@ This is done by comparing [structural similarity (SSIM)](https://en.wikipedia.or
 Basic usage:
 
 ```sh
-$ pio input.jpeg output.jpeg
+$ pio input.jpeg --output output.jpeg
 ```
 
-`pio` supports PNG, JPEG and WebP images.
 In order to achieve high-quality output, the input image should preferably be PNG or high-quality JPEG or WebP.
 
 The target quality can be set using `--target` argument:
 
 ```
-$ pio --target 0.001 input.jpeg output.jpeg
+$ pio input.jpeg --target 0.001 --output output.jpeg
 ```
 
 The target is a SSIM value between 0.0 and infinity where 0.0 means identical images.
 
+For the full list of available options, run `pio --help`.
+
 ## Related projects
 
-- [pio-loader](https://github.com/siiptuo/pio-loader): Webpack loader
+- [pio-loader](https://github.com/siiptuo/pio-loader): webpack integration
 
 ## Alternatives
 

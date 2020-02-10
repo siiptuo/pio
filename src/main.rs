@@ -9,6 +9,7 @@ use rgb::{ComponentBytes, RGB8, RGBA8};
 
 use std::fs::File;
 use std::io::Read;
+use std::mem::MaybeUninit;
 use std::path::Path;
 
 type ReadResult = Result<ImgVec<RGBA8>, String>;
@@ -70,9 +71,9 @@ fn read_png(buffer: &[u8]) -> ReadResult {
 fn compress_png(image: ImgRef<RGBA8>, quality: u8) -> CompressResult {
     let mut liq = imagequant::new();
     liq.set_quality(0, quality as u32);
-    let ref mut img = liq
+    let img = &mut (liq
         .new_image(&image.buf, image.width(), image.height(), 0.0)
-        .map_err(|err| err.to_string())?;
+        .map_err(|err| err.to_string())?);
     let mut res = liq.quantize(&img).map_err(|err| err.to_string())?;
     res.set_dithering_level(1.0);
     let (palette, pixels) = res.remapped(img).map_err(|err| err.to_string())?;
@@ -138,9 +139,9 @@ fn compress_webp(image: ImgRef<RGBA8>, quality: u8) -> CompressResult {
     unsafe {
         let stride = image.width() as i32 * 4;
 
-        let mut config: WebPConfig = std::mem::uninitialized();
+        let mut config = MaybeUninit::<WebPConfig>::uninit();
         let ret = WebPConfigInitInternal(
-            &mut config,
+            config.as_mut_ptr(),
             WebPPreset::WEBP_PRESET_DEFAULT,
             quality as f32,
             WEBP_ENCODER_ABI_VERSION as i32,
@@ -148,20 +149,23 @@ fn compress_webp(image: ImgRef<RGBA8>, quality: u8) -> CompressResult {
         if ret == 0 {
             return Err("libwebp version mismatch".to_string());
         }
+        let mut config = config.assume_init();
         config.method = 6;
 
-        let mut wrt: WebPMemoryWriter = std::mem::uninitialized();
+        let mut wrt = MaybeUninit::<WebPMemoryWriter>::uninit();
+        WebPMemoryWriterInit(wrt.as_mut_ptr());
+        let mut wrt = wrt.assume_init();
 
-        let mut pic: WebPPicture = std::mem::uninitialized();
-        WebPPictureInitInternal(&mut pic, WEBP_ENCODER_ABI_VERSION as i32);
+        let mut pic = MaybeUninit::<WebPPicture>::uninit();
+        WebPPictureInitInternal(pic.as_mut_ptr(), WEBP_ENCODER_ABI_VERSION as i32);
         if ret == 0 {
             return Err("libwebp version mismatch".to_string());
         }
+        let mut pic = pic.assume_init();
         pic.width = image.width() as i32;
         pic.height = image.height() as i32;
         pic.writer = Some(WebPMemoryWrite);
         pic.custom_ptr = &mut wrt as *mut _ as *mut std::ffi::c_void;
-        WebPMemoryWriterInit(&mut wrt);
 
         let ret = WebPPictureImportRGBA(&mut pic, image.buf.as_bytes().as_ptr(), stride);
         if ret == 0 {

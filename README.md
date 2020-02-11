@@ -15,7 +15,7 @@ It's designed to automatically optimize images for the web.
 
 - Optimize images automatically for the web
 - Supports PNG, JPEG and WebP
-- Easily installable statically linked binary
+- Easily installable statically linked binary (for Linux)
 
 ## Background
 
@@ -29,6 +29,13 @@ You could also specify parameters by hand for each image but this isn't feasible
 
 `pio` simplifies image optimization by finding optimal parameters automatically.
 This is done by comparing [structural similarity (SSIM)](https://en.wikipedia.org/wiki/Structural_similarity) of the optimized image to the original.
+
+## Example
+
+| Original                          | JPEG                                                                             | WebP                                                                             |
+| -                                 | -                                                                                | -                                                                                |
+| ![](images/building-original.png) | ![](images/building-optimized.jpeg)<br>**File size:** 7.4 KiB<br>**Quality:** 78 | ![](images/building-optimized.webp)<br>**File size:** 6.9 KiB<br>**Quality:** 76 |
+| ![](images/mountain-original.png) | ![](images/mountain-optimized.jpeg)<br>**File size:** 2.7 KiB<br>**Quality:** 64 | ![](images/mountain-optimized.webp)<br>**File size:** 2.1 KiB<br>**Quality:** 73 |
 
 ## Usage
 

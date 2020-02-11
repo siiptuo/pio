@@ -1,0 +1,11 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+
+Files: images/mountain*
+Copyright: 2017 Snapwire
+License: CC0-1.0
+Comment: https://www.pexels.com/photo/mountain-covering-clouds-670053/
+
+Files: images/building*
+Copyright: 2017 Snapwire
+License: CC0-1.0
+Comment: https://www.pexels.com/photo/glass-building-panels-under-blue-sky-691452/

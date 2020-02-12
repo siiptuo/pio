@@ -53,8 +53,6 @@ Basic usage:
 $ pio input.jpeg --output output.jpeg
 ```
 
-In order to achieve high-quality output, the input image should preferably be PNG or high-quality JPEG or WebP.
-
 The target quality can be set using `--target` argument:
 
 ```
@@ -64,6 +62,26 @@ $ pio input.jpeg --target 0.001 --output output.jpeg
 The target is a SSIM value between 0.0 and infinity where 0.0 means identical images.
 
 For the full list of available options, run `pio --help`.
+
+## Input images
+
+`pio` works by comparing the optimized image to the input image.
+The input image should preferably be PNG or alternatively JPEG or WebP stored with quality 100.
+`pio` will make already lossy compressed images worse.
+
+For the web, you typically want to resize a high-resolution source image to a smaller image.
+For the best result, first resize the high-resolution image and store the resulting image with lossless compression.
+Only after this, optimize the resized image with `pio`.
+
+For example with the help of [ImageMagick](https://imagemagick.org/index.php) you could resize and optimize an image:
+
+```
+$ convert big.jpeg -resize 640x small.png
+$ pio small.png --output optimized.jpeg
+```
+
+Most likely you also want to use [responsive images](https://developer.mozilla.org/en-US/docs/Learn/HTML/Multimedia_and_embedding/Responsive_images) where you create multiple differently sized images for different resolutions.
+You should do the resize and optimization separately for each size.
 
 ## Related projects
 

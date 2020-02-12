@@ -83,6 +83,18 @@ $ pio small.png --output optimized.jpeg
 Most likely you also want to use [responsive images](https://developer.mozilla.org/en-US/docs/Learn/HTML/Multimedia_and_embedding/Responsive_images) where you create multiple differently sized images for different resolutions.
 You should do the resize and optimization separately for each size.
 
+## Suggested quality settings
+
+Need suggestions for good quality target settings? Below is a table of JPEG quality settings mapped to the average SSIM values. For example SSIM target of 0.0044 maps rougly to the JPEG quality of 85. These values have been created by running a corpus of images through JPEG compression and calculating the average SSIM. For full table [see here](https://gist.github.com/joppuyo/12fe6fb5e5fa532b21e2c8098634c7c9).
+
+| Quality            | JPEG equivalent | SSIM Value | 
+| ------------------ | --------------- | ---------- |
+| Extra low quality  | 75              | 0.0073     |
+| Low quality        | 80              | 0.0057     |
+| Medium quality     | 85              | 0.0044     |
+| High quality       | 90              | 0.0029     |
+| Extra high quality | 95              | 0.0016     |
+
 ## Related projects
 
 - [pio-loader](https://github.com/siiptuo/pio-loader): webpack integration

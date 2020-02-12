@@ -32,10 +32,18 @@ This is done by comparing [structural similarity (SSIM)](https://en.wikipedia.or
 
 ## Example
 
-| Original                          | JPEG                                                                             | WebP                                                                             |
-| -                                 | -                                                                                | -                                                                                |
-| ![](images/building-original.png) | ![](images/building-optimized.jpeg)<br>**File size:** 7.4 KiB<br>**Quality:** 78 | ![](images/building-optimized.webp)<br>**File size:** 6.9 KiB<br>**Quality:** 76 |
-| ![](images/mountain-original.png) | ![](images/mountain-optimized.jpeg)<br>**File size:** 2.7 KiB<br>**Quality:** 64 | ![](images/mountain-optimized.webp)<br>**File size:** 2.1 KiB<br>**Quality:** 73 |
+Here we can see that `pio` finds different quality parameter for different images.
+In general images with a lot of details require higher quality than those with fewer details.
+
+However `pio` is not perfect.
+For instance optimized JPEG of the first image is quite heavily compressed.
+This is fine for the mostly solid sky but not for the bridge with more details.
+
+| Original                                                                                                                                                                                                                                                                           | JPEG                                                                           | WebP                                                                           |
+| -                                                                                                                                                                                                                                                                                  | -                                                                              | -                                                                              |
+| ![](images/image1-original.jpeg)<br>Photo: [Josh Felise](https://www.snapwi.re/user/JPFelise)<br>[CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) &bullet; [Source](https://snapwiresnaps.tumblr.com/post/140752672614/josh-felise-free-under-cc0-10-download)        | ![](images/image1-optimized.jpeg)<br>**File size:** 1.5 KiB<br>**Quality:** 48 | ![](images/image1-optimized.webp)<br>**File size:** 1.1 KiB<br>**Quality:** 57 |
+| ![](images/image2-original.jpeg)<br>Photo: [Dominik Martin](https://www.snapwi.re/user/dominikmartn)<br>[CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) &bullet; [Source](https://snapwiresnaps.tumblr.com/post/102447448703/dominik-martin-wwwdominikmartin-free)   | ![](images/image2-optimized.jpeg)<br>**File size:** 3.6 KiB<br>**Quality:** 76 | ![](images/image2-optimized.webp)<br>**File size:** 3.2 KiB<br>**Quality:** 80 |
+| ![](images/image3-original.jpeg)<br>Photo: [Michael Day](https://www.snapwi.re/user/bucktownchicago)<br>[CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) &bullet; [Source](https://snapwiresnaps.tumblr.com/post/171101090646/michael-day-free-under-cc0-10-download) | ![](images/image3-optimized.jpeg)<br>**File size:** 15 KiB<br>**Quality:** 89  | ![](images/image3-optimized.webp)<br>**File size:** 12 KiB<br>**Quality:** 78  |
 
 ## Usage
 

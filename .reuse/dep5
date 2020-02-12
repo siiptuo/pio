@@ -1,11 +1,16 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 
-Files: images/mountain*
-Copyright: 2017 Snapwire
+Files: images/image1*
+Copyright: 2017 Josh Felise
 License: CC0-1.0
-Comment: https://www.pexels.com/photo/mountain-covering-clouds-670053/
+Comment: https://snapwiresnaps.tumblr.com/post/140752672614/josh-felise-free-under-cc0-10-download
 
-Files: images/building*
-Copyright: 2017 Snapwire
+Files: images/image2*
+Copyright: 2015 Dominik Martin
 License: CC0-1.0
-Comment: https://www.pexels.com/photo/glass-building-panels-under-blue-sky-691452/
+Comment: https://snapwiresnaps.tumblr.com/post/102447448703/dominik-martin-wwwdominikmartin-free
+
+Files: images/image3*
+Copyright: 2019 Michael Day
+License: CC0-1.0
+Comment: https://snapwiresnaps.tumblr.com/post/171101090646/michael-day-free-under-cc0-10-download

@@ -90,14 +90,14 @@ $ convert big.jpeg -resize 640x small.png
 $ pio small.png --output optimized.jpeg
 ```
 
-Most likely you also want to use [responsive images](https://developer.mozilla.org/en-US/docs/Learn/HTML/Multimedia_and_embedding/Responsive_images) where you create multiple differently sized images for different resolutions.
-You should do the resize and optimization separately for each size.
+Most likely you also want to use [responsive images](https://developer.mozilla.org/en-US/docs/Learn/HTML/Multimedia_and_embedding/Responsive_images) where you create multiple differently sized images for different display resolutions.
+You should do the resizing and optimization for each size independently.
 
 ### Suggested quality settings
 
 Need suggestions for good quality target settings?
 Below is a table of JPEG quality settings mapped to the average SSIM values.
-For example SSIM target of 0.0044 maps rougly to the JPEG quality of 85.
+For example SSIM target of 0.0044 maps roughly to the JPEG quality of 85.
 These values have been created by running a corpus of images through JPEG compression and calculating the average SSIM.
 For full table [see here](https://gist.github.com/joppuyo/12fe6fb5e5fa532b21e2c8098634c7c9).
 

@@ -3,6 +3,15 @@ name: Rust
 on: [push]
 
 jobs:
+  reuse:
+
+    runs-on: ubuntu-18.04
+
+    steps:
+      - name: Check REUSE compliance
+        uses: docker://fsfe/reuse
+        with:
+          args: reuse lint
   build:
 
     runs-on: ${{ matrix.os }}

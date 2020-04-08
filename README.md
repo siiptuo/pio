@@ -15,7 +15,7 @@ It's designed to automatically optimize images for the web.
 
 - Optimize images automatically for the web
 - Supports PNG, JPEG and WebP
-- Easily installable statically linked binary (for Linux)
+- Easily installable statically linked binary (for Linux and macOS)
 
 ## Background
 

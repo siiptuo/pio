@@ -3,7 +3,7 @@
 
 [package]
 name = "pio"
-version = "0.2.0"
+version = "0.2.1"
 authors = ["Tuomas Siipola <tuomas@zpl.fi>"]
 edition = "2018"
 license = "AGPL-3.0-or-later"

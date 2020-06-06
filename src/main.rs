@@ -72,7 +72,7 @@ fn compress_png(image: ImgRef<RGBA8>, quality: u8) -> CompressResult {
     let mut liq = imagequant::new();
     liq.set_quality(0, quality as u32);
     let img = &mut (liq
-        .new_image(&image.buf, image.width(), image.height(), 0.0)
+        .new_image(&image.buf(), image.width(), image.height(), 0.0)
         .map_err(|err| err.to_string())?);
     let mut res = liq.quantize(&img).map_err(|err| err.to_string())?;
     res.set_dithering_level(1.0);
@@ -167,7 +167,7 @@ fn compress_webp(image: ImgRef<RGBA8>, quality: u8) -> CompressResult {
         pic.writer = Some(WebPMemoryWrite);
         pic.custom_ptr = &mut wrt as *mut _ as *mut std::ffi::c_void;
 
-        let ret = WebPPictureImportRGBA(&mut pic, image.buf.as_bytes().as_ptr(), stride);
+        let ret = WebPPictureImportRGBA(&mut pic, image.buf().as_bytes().as_ptr(), stride);
         if ret == 0 {
             WebPPictureFree(&mut pic);
             WebPMemoryWriterClear(&mut wrt);
@@ -208,7 +208,7 @@ fn compress_webp(image: ImgRef<RGBA8>, quality: u8) -> CompressResult {
 }
 
 fn convert(image: ImgRef<RGBA8>) -> ImgVec<RGBAPLU> {
-    Img::new(image.buf.to_rgbaplu(), image.width(), image.height())
+    Img::new(image.buf().to_rgbaplu(), image.width(), image.height())
 }
 
 #[derive(PartialEq)]

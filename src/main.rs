@@ -7,6 +7,7 @@ use imgref::{Img, ImgRef, ImgVec};
 use libwebp_sys::*;
 use rgb::{ComponentBytes, RGB8, RGBA8};
 
+use std::ffi::OsStr;
 use std::fs::File;
 use std::io::Read;
 use std::mem::MaybeUninit;
@@ -231,8 +232,8 @@ impl Format {
     fn detect(path: impl AsRef<Path>) -> Option<Self> {
         path.as_ref()
             .extension()
-            .and_then(std::ffi::OsStr::to_str)
-            .and_then(Self::from_str)
+            .and_then(OsStr::to_str)
+            .and_then(|ext| Self::from_str(&ext.to_ascii_lowercase()))
     }
 }
 

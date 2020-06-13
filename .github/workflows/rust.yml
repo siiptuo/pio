@@ -39,7 +39,10 @@ jobs:
         if: runner.os == 'macOS'
       - name: Build
         run: rustup component add clippy rustfmt
-      - name: Build (Linux)
+      - name: Build (Linux-gnu)
+        run: cargo build --release --target=x86_64-unknown-linux-gnu
+        if: runner.os == 'Linux'
+      - name: Build (Linux-musl)
         run: cargo build --release --target=x86_64-unknown-linux-musl
         if: runner.os == 'Linux'
       - name: Build (Mac)
@@ -55,7 +58,13 @@ jobs:
         with:
           name: pio-x86_64-apple-darwin
           path: target/x86_64-apple-darwin/release/pio
-      - name: Upload (Linux)
+      - name: Upload (Linux-gnu)
+        uses: actions/upload-artifact@v1
+        if: runner.os == 'Linux'
+        with:
+          name: pio-x86_64-unknown-linux-gnu
+          path: target/x86_64-unknown-linux-gnu/release/pio
+      - name: Upload (Linux-musl)
         uses: actions/upload-artifact@v1
         if: runner.os == 'Linux'
         with:
@@ -63,7 +72,9 @@ jobs:
           path: target/x86_64-unknown-linux-musl/release/pio
       - name: Move (Linux)
         if: runner.os == 'Linux'
-        run: mv target/x86_64-unknown-linux-musl/release/pio pio-x86_64-unknown-linux-musl
+        run: |
+          mv target/x86_64-unknown-linux-gnu/release/pio pio-x86_64-unknown-linux-gnu
+          mv target/x86_64-unknown-linux-musl/release/pio pio-x86_64-unknown-linux-musl
       - name: Move (Mac)
         if: runner.os == 'macOS'
         run: mv target/x86_64-apple-darwin/release/pio pio-x86_64-apple-darwin
@@ -78,6 +89,8 @@ jobs:
         uses: softprops/action-gh-release@v1
         if: startsWith(github.ref, 'refs/tags/') && runner.os == 'Linux'
         with:
-          files: pio-x86_64-unknown-linux-musl
+          files: |
+            pio-x86_64-unknown-linux-gnu
+            pio-x86_64-unknown-linux-musl
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

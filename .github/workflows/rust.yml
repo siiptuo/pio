@@ -14,10 +14,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v2
-      - name: Check REUSE compliance
-        uses: docker://fsfe/reuse
-        with:
-          args: reuse lint
+      - name: REUSE Compliance Check
+        uses: fsfe/reuse-action@v1.1
 
   build:
 

@@ -16,6 +16,26 @@ use std::path::Path;
 type ReadResult = Result<ImgVec<RGBA8>, String>;
 type CompressResult = Result<(ImgVec<RGBA8>, Vec<u8>), String>;
 
+#[rustfmt::skip]
+const QUALITY_SSIM: [f64; 101] = [
+    0.64405, 0.64405, 0.493921, 0.3717685, 0.2875005, 0.226447, 0.18505, 0.155942,
+    0.13402550000000002, 0.1161245, 0.10214999999999999, 0.09164900000000001, 0.0830645,
+    0.0747825, 0.0686465, 0.0636275, 0.058777499999999996, 0.054973999999999995, 0.0509935,
+    0.048128000000000004, 0.0452685, 0.0428175, 0.0404645, 0.0387125, 0.036169999999999994,
+    0.034700999999999996, 0.03334, 0.0319895, 0.029954, 0.029339499999999998, 0.028261,
+    0.0271415, 0.025916, 0.0248545, 0.0244545, 0.023451, 0.022603, 0.022269, 0.021344, 0.020581,
+    0.0202495, 0.019450000000000002, 0.019161499999999998, 0.0189065, 0.018063, 0.017832,
+    0.0169555, 0.016857999999999998, 0.016676, 0.0159105, 0.0157275, 0.015555,
+    0.014891499999999998, 0.014727, 0.0145845, 0.013921, 0.0137565, 0.0135065, 0.012928,
+    0.012669, 0.0125305, 0.011922499999999999, 0.011724, 0.011544, 0.0112675, 0.0107825,
+    0.010481, 0.010245, 0.009772, 0.0095075, 0.009262, 0.008721, 0.0084715, 0.008324999999999999,
+    0.007556500000000001, 0.0074540000000000006, 0.007243, 0.0067735, 0.0066254999999999994,
+    0.006356499999999999, 0.005924499999999999, 0.005674500000000001, 0.005422, 0.0050215,
+    0.0047565, 0.0044755, 0.0041294999999999995, 0.0038510000000000003, 0.00361, 0.003372,
+    0.0029255, 0.0027010000000000003, 0.0024415, 0.002091, 0.0017955, 0.001591, 0.001218,
+    0.0009805, 0.000749, 0.000548, 0.0004,
+];
+
 fn read_jpeg(buffer: &[u8]) -> ReadResult {
     let dinfo = mozjpeg::Decompress::new_mem(buffer).map_err(|err| err.to_string())?;
     let mut rgb = dinfo.rgb().map_err(|err| err.to_string())?;
@@ -305,23 +325,10 @@ fn compress_image(
     Ok(buffer)
 }
 
-fn validate_target(x: String) -> Result<(), String> {
-    match x.parse::<f64>() {
-        Ok(x) => {
-            if x >= 0.0 {
-                Ok(())
-            } else {
-                Err("expected value between 0.0 and infinity".to_string())
-            }
-        }
-        Err(_) => Err("expected value between 0.0 and infinity".to_string()),
-    }
-}
-
 fn validate_quality(x: String) -> Result<(), String> {
     match x.parse::<i8>() {
         Ok(x) => {
-            if x >= 0 || x <= 100 {
+            if (0..=100).contains(&x) {
                 Ok(())
             } else {
                 Err("expected value between 0 and 100".to_string())
@@ -370,13 +377,13 @@ fn main() {
                 .validator(validate_format),
         )
         .arg(
-            Arg::with_name("target")
-                .long("target")
-                .value_name("SSIM")
-                .help("Sets target SSIM for output")
+            Arg::with_name("quality")
+                .long("quality")
+                .value_name("quality")
+                .help("Sets target quality for output")
                 .takes_value(true)
-                .default_value("0.01")
-                .validator(validate_target),
+                .default_value("85")
+                .validator(validate_quality),
         )
         .arg(
             Arg::with_name("min")
@@ -459,7 +466,11 @@ fn main() {
         }
     };
 
-    let target = matches.value_of("target").unwrap().parse().unwrap();
+    let target = QUALITY_SSIM[matches
+        .value_of("quality")
+        .unwrap()
+        .parse::<usize>()
+        .unwrap()];
 
     let min = matches.value_of("min").unwrap().parse().unwrap();
     let max = matches.value_of("max").unwrap().parse().unwrap();

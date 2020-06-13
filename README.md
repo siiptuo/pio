@@ -42,11 +42,11 @@ However `pio` is not perfect.
 For instance optimized JPEG of the first image is quite heavily compressed.
 This is fine for the mostly solid sky but not for the bridge with more details.
 
-| Original                                                                                                                                                                                                                                                                           | Optimized JPEG                                                                 | Optimized WebP                                                                 |
-| -                                                                                                                                                                                                                                                                                  | -                                                                              | -                                                                              |
-| ![](images/image1-original.jpeg)<br>Photo: [Josh Felise](https://www.snapwi.re/user/JPFelise)<br>[CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) &bullet; [Source](https://snapwiresnaps.tumblr.com/post/140752672614/josh-felise-free-under-cc0-10-download)        | ![](images/image1-optimized.jpeg)<br>**File size:** 1.5 KiB<br>**Quality:** 48 | ![](images/image1-optimized.webp)<br>**File size:** 1.1 KiB<br>**Quality:** 57 |
-| ![](images/image2-original.jpeg)<br>Photo: [Dominik Martin](https://www.snapwi.re/user/dominikmartn)<br>[CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) &bullet; [Source](https://snapwiresnaps.tumblr.com/post/102447448703/dominik-martin-wwwdominikmartin-free)   | ![](images/image2-optimized.jpeg)<br>**File size:** 3.6 KiB<br>**Quality:** 76 | ![](images/image2-optimized.webp)<br>**File size:** 3.2 KiB<br>**Quality:** 80 |
-| ![](images/image3-original.jpeg)<br>Photo: [Michael Day](https://www.snapwi.re/user/bucktownchicago)<br>[CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) &bullet; [Source](https://snapwiresnaps.tumblr.com/post/171101090646/michael-day-free-under-cc0-10-download) | ![](images/image3-optimized.jpeg)<br>**File size:** 15 KiB<br>**Quality:** 89  | ![](images/image3-optimized.webp)<br>**File size:** 12 KiB<br>**Quality:** 78  |
+| Original                                                                                                                                                                                                                                                                          | Optimized JPEG                                                                | Optimized WebP                                                                |
+| -                                                                                                                                                                                                                                                                                 | -                                                                             | -                                                                             |
+| ![](images/image1-original.png)<br>Photo: [Josh Felise](https://www.snapwi.re/user/JPFelise)<br>[CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) &bullet; [Source](https://snapwiresnaps.tumblr.com/post/140752672614/josh-felise-free-under-cc0-10-download)        | ![](images/image1-optimized.jpeg)<br>**File size:** 2,0KiB<br>**Quality:** 73 | ![](images/image1-optimized.webp)<br>**File size:** 1,7KiB<br>**Quality:** 82 |
+| ![](images/image2-original.png)<br>Photo: [Dominik Martin](https://www.snapwi.re/user/dominikmartn)<br>[CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) &bullet; [Source](https://snapwiresnaps.tumblr.com/post/102447448703/dominik-martin-wwwdominikmartin-free)   | ![](images/image2-optimized.jpeg)<br>**File size:** 5,7KiB<br>**Quality:** 89 | ![](images/image2-optimized.webp)<br>**File size:** 5,0KiB<br>**Quality:** 89 |
+| ![](images/image3-original.png)<br>Photo: [Michael Day](https://www.snapwi.re/user/bucktownchicago)<br>[CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) &bullet; [Source](https://snapwiresnaps.tumblr.com/post/171101090646/michael-day-free-under-cc0-10-download) | ![](images/image3-optimized.jpeg)<br>**File size:** 21KiB<br>**Quality:** 95  | ![](images/image3-optimized.webp)<br>**File size:** 20KiB<br>**Quality:** 95  |
 
 ## Installation
 
@@ -65,13 +65,13 @@ Basic usage:
 $ pio input.jpeg --output output.jpeg
 ```
 
-The target quality can be set using `--target` argument:
+The target quality can be set using `--quality` argument:
 
 ```
-$ pio input.jpeg --target 0.001 --output output.jpeg
+$ pio input.jpeg --quality 95 --output output.jpeg
 ```
 
-The target is a SSIM value between 0.0 and infinity where 0.0 means identical images.
+The target quality is a value between 0 and 100 and roughly corresponds to JPEG quality values.
 
 For the full list of available options, run `pio --help`.
 
@@ -94,22 +94,6 @@ $ pio small.png --output optimized.jpeg
 
 Most likely you also want to use [responsive images](https://developer.mozilla.org/en-US/docs/Learn/HTML/Multimedia_and_embedding/Responsive_images) where you create multiple differently sized images for different display resolutions.
 You should do the resizing and optimization for each size independently.
-
-### Suggested quality settings
-
-Need suggestions for good quality target settings?
-Below is a table of JPEG quality settings mapped to the average SSIM values.
-For example SSIM target of 0.0044 maps roughly to the JPEG quality of 85.
-These values have been created by running a corpus of images through JPEG compression and calculating the average SSIM.
-For full table [see here](https://gist.github.com/joppuyo/12fe6fb5e5fa532b21e2c8098634c7c9).
-
-| Quality            | JPEG equivalent | SSIM Value |
-| ------------------ | --------------- | ---------- |
-| Extra low quality  | 75              | 0.0073     |
-| Low quality        | 80              | 0.0057     |
-| Medium quality     | 85              | 0.0044     |
-| High quality       | 90              | 0.0029     |
-| Extra high quality | 95              | 0.0016     |
 
 ## Links
 

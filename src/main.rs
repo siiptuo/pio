@@ -391,7 +391,6 @@ fn main() {
                 .value_name("quality")
                 .help("Sets minimum quality for output")
                 .takes_value(true)
-                .default_value("40")
                 .validator(validate_quality),
         )
         .arg(
@@ -400,7 +399,6 @@ fn main() {
                 .value_name("quality")
                 .help("Sets maximum quality for output")
                 .takes_value(true)
-                .default_value("95")
                 .validator(validate_quality),
         )
         .get_matches();
@@ -466,14 +464,18 @@ fn main() {
         }
     };
 
-    let target = QUALITY_SSIM[matches
-        .value_of("quality")
-        .unwrap()
-        .parse::<usize>()
-        .unwrap()];
+    let quality = matches.value_of("quality").unwrap().parse::<u8>().unwrap();
 
-    let min = matches.value_of("min").unwrap().parse().unwrap();
-    let max = matches.value_of("max").unwrap().parse().unwrap();
+    let target = QUALITY_SSIM[quality as usize];
+
+    let min = match matches.value_of("min") {
+        Some(s) => s.parse().unwrap(),
+        None => std::cmp::max(0, quality - 10),
+    };
+    let max = match matches.value_of("max") {
+        Some(s) => s.parse().unwrap(),
+        None => std::cmp::min(quality + 10, 100),
+    };
     if min > max {
         eprintln!("min must be smaller or equal to max");
         std::process::exit(1);

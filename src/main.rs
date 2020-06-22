@@ -297,7 +297,7 @@ fn compress_image(
             }
         }
 
-        let mut attr = Dssim::new();
+        let attr = Dssim::new();
         let (dssim, _ssim_maps) = attr.compare(
             &original,
             attr.create_image(&convert(compressed.as_ref()))

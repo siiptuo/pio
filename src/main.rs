@@ -3,9 +3,9 @@
 
 use clap::{App, Arg};
 use dssim::{Dssim, ToRGBAPLU, RGBAPLU};
-use imgref::{Img, ImgRef, ImgVec};
+use imgref::{Img, ImgVec};
 use libwebp_sys::*;
-use rgb::{ComponentBytes, RGB8, RGBA8};
+use rgb::{alt::GRAY8, ComponentBytes, RGB8, RGBA8};
 
 use std::ffi::OsStr;
 use std::fs::File;
@@ -13,8 +13,80 @@ use std::io::Read;
 use std::mem::MaybeUninit;
 use std::path::Path;
 
-type ReadResult = Result<ImgVec<RGBA8>, String>;
-type CompressResult = Result<(ImgVec<RGBA8>, Vec<u8>), String>;
+enum ColorSpace {
+    Gray,
+    GrayAlpha,
+    RGB,
+    RGBA,
+}
+
+struct Image {
+    width: usize,
+    height: usize,
+    data: Vec<RGBA8>,
+    color_space: ColorSpace,
+}
+
+fn distance(a: u8, b: u8) -> u8 {
+    if a < b {
+        b - a
+    } else {
+        a - b
+    }
+}
+
+fn is_gray(color: RGB8) -> bool {
+    distance(color.r, color.g) <= 1 && distance(color.r, color.b) <= 1
+}
+
+impl Image {
+    fn from_rgba(data: Vec<RGBA8>, width: usize, height: usize) -> Self {
+        let has_color = data.iter().any(|c| !is_gray(c.rgb()));
+        let has_alpha = data.iter().any(|c| c.a < 255);
+        Self {
+            width,
+            height,
+            data,
+            color_space: match (has_color, has_alpha) {
+                (false, false) => ColorSpace::Gray,
+                (false, true) => ColorSpace::GrayAlpha,
+                (true, false) => ColorSpace::RGB,
+                (true, true) => ColorSpace::RGBA,
+            },
+        }
+    }
+
+    fn from_rgb(data: Vec<RGB8>, width: usize, height: usize) -> Self {
+        Self::from_rgba(data.iter().map(|c| c.alpha(255)).collect(), width, height)
+    }
+
+    fn to_rgbaplu(&self) -> ImgVec<RGBAPLU> {
+        Img::new(self.data.to_rgbaplu(), self.width, self.height)
+    }
+
+    fn to_gray(&self) -> ImgVec<GRAY8> {
+        Img::new(
+            self.data.iter().map(|c| c.r.into()).collect(),
+            self.width,
+            self.height,
+        )
+    }
+
+    fn to_rgb(&self) -> ImgVec<RGB8> {
+        Img::new(
+            self.data.iter().map(|c| c.rgb()).collect(),
+            self.width,
+            self.height,
+        )
+    }
+
+    fn as_bytes(&self) -> &[u8] {
+        self.data.as_bytes()
+    }
+}
+
+type ReadResult = Result<Image, String>;
+type CompressResult = Result<(Image, Vec<u8>), String>;
 
 #[rustfmt::skip]
 const QUALITY_SSIM: [f64; 101] = [
@@ -45,84 +117,72 @@ fn read_jpeg(buffer: &[u8]) -> ReadResult {
         .read_scanlines()
         .ok_or_else(|| "Failed decode image data".to_string())?;
     rgb.finish_decompress();
-    Ok(Img::new(
-        data.iter().map(|c| c.alpha(255)).collect(),
-        width,
-        height,
-    ))
+    Ok(Image::from_rgb(data, width, height))
 }
 
-fn compress_jpeg(image: ImgRef<RGBA8>, quality: u8) -> CompressResult {
-    let mut cinfo = mozjpeg::Compress::new(mozjpeg::ColorSpace::JCS_RGB);
-    cinfo.set_size(image.width(), image.height());
+fn compress_jpeg(image: &Image, quality: u8) -> CompressResult {
+    let mut cinfo = mozjpeg::Compress::new(match image.color_space {
+        ColorSpace::Gray => mozjpeg::ColorSpace::JCS_GRAYSCALE,
+        _ => mozjpeg::ColorSpace::JCS_RGB,
+    });
+    cinfo.set_size(image.width, image.height);
     cinfo.set_quality(quality as f32);
     cinfo.set_mem_dest();
     cinfo.start_compress();
-    let rgb: Vec<RGB8> = image.pixels().map(|c| c.rgb()).collect();
-    if !cinfo.write_scanlines(rgb.as_bytes()) {
+    if !match image.color_space {
+        ColorSpace::Gray => cinfo.write_scanlines(image.to_gray().buf().as_bytes()),
+        _ => cinfo.write_scanlines(image.to_rgb().buf().as_bytes()),
+    } {
         return Err("Failed to compress image data".to_string());
     }
     cinfo.finish_compress();
     let cdata = cinfo
         .data_to_vec()
         .map_err(|_err| "Failed to compress image".to_string())?;
-
-    let dinfo = mozjpeg::Decompress::new_mem(&cdata).map_err(|err| err.to_string())?;
-    let mut rgb = dinfo.rgb().map_err(|err| err.to_string())?;
-    let data: Vec<RGB8> = rgb
-        .read_scanlines()
-        .ok_or_else(|| "Failed to decode image data".to_string())?;
-    rgb.finish_decompress();
-
-    Ok((
-        Img::new(
-            data.iter().map(|c| c.alpha(255)).collect(),
-            image.width(),
-            image.height(),
-        ),
-        cdata,
-    ))
+    let image = read_jpeg(&cdata)?;
+    Ok((image, cdata))
 }
 
 fn read_png(buffer: &[u8]) -> ReadResult {
     let png = lodepng::decode32(buffer).map_err(|err| err.to_string())?;
-    Ok(Img::new(png.buffer, png.width, png.height))
+    Ok(Image::from_rgba(png.buffer, png.width, png.height))
 }
 
-fn compress_png(image: ImgRef<RGBA8>, quality: u8) -> CompressResult {
-    let mut liq = imagequant::new();
-    liq.set_quality(0, quality as u32);
-    let img = &mut (liq
-        .new_image(&image.buf(), image.width(), image.height(), 0.0)
-        .map_err(|err| err.to_string())?);
-    let mut res = liq.quantize(&img).map_err(|err| err.to_string())?;
-    res.set_dithering_level(1.0);
-    let (palette, pixels) = res.remapped(img).map_err(|err| err.to_string())?;
-
-    let mut state = lodepng::State::new();
-    for color in &palette {
+fn compress_png(image: &Image, quality: u8) -> CompressResult {
+    let (palette, pixels) = {
+        let mut liq = imagequant::new();
+        liq.set_quality(0, quality as u32);
+        let img = &mut (liq
+            .new_image(&image.data, image.width, image.height, 0.0)
+            .map_err(|err| err.to_string())?);
+        let mut res = liq.quantize(&img).map_err(|err| err.to_string())?;
+        res.set_dithering_level(1.0);
+        res.remapped(img).map_err(|err| err.to_string())?
+    };
+    let buffer = {
+        let mut state = lodepng::State::new();
+        for color in &palette {
+            state
+                .info_raw
+                .palette_add(*color)
+                .map_err(|err| err.to_string())?;
+            state
+                .info_png
+                .color
+                .palette_add(*color)
+                .map_err(|err| err.to_string())?;
+        }
+        state.info_raw.colortype = lodepng::ColorType::PALETTE;
+        state.info_raw.set_bitdepth(8);
+        state.info_png.color.colortype = lodepng::ColorType::PALETTE;
+        state.info_png.color.set_bitdepth(8);
+        state.set_auto_convert(false);
         state
-            .info_raw
-            .palette_add(*color)
-            .map_err(|err| err.to_string())?;
-        state
-            .info_png
-            .color
-            .palette_add(*color)
-            .map_err(|err| err.to_string())?;
-    }
-    state.info_raw.colortype = lodepng::ColorType::PALETTE;
-    state.info_raw.set_bitdepth(8);
-    state.info_png.color.colortype = lodepng::ColorType::PALETTE;
-    state.info_png.color.set_bitdepth(8);
-    state.set_auto_convert(false);
-    let buffer = state
-        .encode(&pixels, image.width(), image.height())
-        .map_err(|err| err.to_string())?;
-
+            .encode(&pixels, image.width, image.height)
+            .map_err(|err| err.to_string())?
+    };
     let result = pixels.iter().map(|i| palette[*i as usize]).collect();
-
-    Ok((Img::new(result, image.width(), image.height()), buffer))
+    Ok((Image::from_rgba(result, image.width, image.height), buffer))
 }
 
 fn read_webp(buffer: &[u8]) -> ReadResult {
@@ -153,13 +213,11 @@ fn read_webp(buffer: &[u8]) -> ReadResult {
         return Err("Failed to decode image data".to_string());
     }
 
-    Ok(Img::new(data, width as usize, height as usize))
+    Ok(Image::from_rgba(data, width as usize, height as usize))
 }
 
-fn compress_webp(image: ImgRef<RGBA8>, quality: u8) -> CompressResult {
+fn compress_webp(image: &Image, quality: u8) -> CompressResult {
     unsafe {
-        let stride = image.width() as i32 * 4;
-
         let mut config = MaybeUninit::<WebPConfig>::uninit();
         let ret = WebPConfigInitInternal(
             config.as_mut_ptr(),
@@ -183,12 +241,13 @@ fn compress_webp(image: ImgRef<RGBA8>, quality: u8) -> CompressResult {
             return Err("libwebp version mismatch".to_string());
         }
         let mut pic = pic.assume_init();
-        pic.width = image.width() as i32;
-        pic.height = image.height() as i32;
+        pic.width = image.width as i32;
+        pic.height = image.height as i32;
         pic.writer = Some(WebPMemoryWrite);
         pic.custom_ptr = &mut wrt as *mut _ as *mut std::ffi::c_void;
 
-        let ret = WebPPictureImportRGBA(&mut pic, image.buf().as_bytes().as_ptr(), stride);
+        let stride = image.width as i32 * 4;
+        let ret = WebPPictureImportRGBA(&mut pic, image.as_bytes().as_ptr(), stride);
         if ret == 0 {
             WebPPictureFree(&mut pic);
             WebPMemoryWriterClear(&mut wrt);
@@ -206,7 +265,7 @@ fn compress_webp(image: ImgRef<RGBA8>, quality: u8) -> CompressResult {
         let buffer = wrt.mem;
         let len = wrt.size;
 
-        let capacity = image.width() * image.height();
+        let capacity = image.width * image.height;
         let mut pixels: Vec<RGBA8> = Vec::with_capacity(capacity);
         pixels.set_len(capacity);
 
@@ -214,8 +273,8 @@ fn compress_webp(image: ImgRef<RGBA8>, quality: u8) -> CompressResult {
             buffer,
             len,
             pixels.as_mut_ptr() as *mut u8,
-            4 * image.width() * image.height(),
-            (4 * image.width()) as i32,
+            4 * image.width * image.height,
+            (4 * image.width) as i32,
         );
         if ret.is_null() {
             return Err("Failed to decode image data".to_string());
@@ -224,12 +283,8 @@ fn compress_webp(image: ImgRef<RGBA8>, quality: u8) -> CompressResult {
         // XXX: Not safe because `buffer` is not allocated by `Vec`
         let buffer = Vec::from_raw_parts(buffer, len as usize, len as usize);
 
-        Ok((Img::new(pixels, image.width(), image.height()), buffer))
+        Ok((Image::from_rgba(pixels, image.width, image.height), buffer))
     }
-}
-
-fn convert(image: ImgRef<RGBA8>) -> ImgVec<RGBAPLU> {
-    Img::new(image.buf().to_rgbaplu(), image.width(), image.height())
 }
 
 #[derive(PartialEq)]
@@ -258,8 +313,8 @@ impl Format {
 }
 
 fn compress_image(
-    image: ImgRef<RGBA8>,
-    compressor: impl Fn(ImgRef<RGBA8>, u8) -> CompressResult,
+    image: Image,
+    compressor: impl Fn(&Image, u8) -> CompressResult,
     target: f64,
     min_quality: u8,
     max_quality: u8,
@@ -267,7 +322,7 @@ fn compress_image(
 ) -> Result<Vec<u8>, String> {
     let attr = Dssim::new();
     let original = attr
-        .create_image(&convert(image))
+        .create_image(&image.to_rgbaplu())
         .ok_or_else(|| "Failed to create DSSIM image".to_string())?;
 
     let mut min = min_quality;
@@ -277,7 +332,7 @@ fn compress_image(
 
     loop {
         let quality = (min + max) / 2;
-        let (a, b) = compressor(image, quality)?;
+        let (a, b) = compressor(&image, quality)?;
         compressed = a;
         buffer = b;
 
@@ -300,7 +355,7 @@ fn compress_image(
         let attr = Dssim::new();
         let (dssim, _ssim_maps) = attr.compare(
             &original,
-            attr.create_image(&convert(compressed.as_ref()))
+            attr.create_image(&compressed.to_rgbaplu())
                 .ok_or_else(|| "Failed create DSSIM image")?,
         );
 
@@ -500,7 +555,7 @@ fn main() {
     };
 
     match compress_image(
-        input_image.as_ref(),
+        input_image,
         compressor,
         target,
         min,

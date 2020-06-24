@@ -19,6 +19,9 @@ It's designed to automatically optimize images for the web.
 - Supports PNG, JPEG and WebP
 - Easily installable statically linked binary (for Linux and macOS)
 
+`pio` is still under development but should be usable for most images.
+It lacks some important features like proper color management support.
+
 ## Background
 
 Images are an important part of the web but they usually use a lot of bandwidth (see HTTP Archive's [Page Weight](https://httparchive.org/reports/page-weight) for statistics).
@@ -52,6 +55,10 @@ This is fine for the mostly solid sky but not for the bridge with more details.
 
 Download the latest binary from [GitHub releases](https://github.com/siiptuo/pio/releases).
 Store the binary somewhere on your `PATH` like `/usr/local/bin/pio`.
+
+There are two versions for Linux: glibc and musl.
+glibc version is about 50% faster than musl version but may not work on old and non-glibc-based distributions.
+glibc version is built on Ubuntu 18.04 against glibc 2.27.
 
 Otherwise download and compile the source code.
 This requires Rust and C toolchains.

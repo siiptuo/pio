@@ -72,9 +72,26 @@ impl Image {
         )
     }
 
-    fn to_rgb(&self) -> ImgVec<RGB8> {
+    fn to_rgb(&self, bg: RGB8) -> ImgVec<RGB8> {
         Img::new(
-            self.data.iter().map(|c| c.rgb()).collect(),
+            self.data
+                .iter()
+                .map(|c| {
+                    // Alpha blending with gamma correction
+                    let to_f32 = |x| x as f32 / 255.0;
+                    let to_u8 = |x| (255.0 * x) as u8;
+                    let gamma = 2.2;
+                    let a = to_f32(c.a);
+                    c.rgb()
+                        .iter()
+                        .map(to_f32)
+                        .zip(bg.iter().map(to_f32))
+                        .map(|(x, y)| {
+                            to_u8((x.powf(gamma) * a + y.powf(gamma) * (1.0 - a)).powf(1.0 / gamma))
+                        })
+                        .collect()
+                })
+                .collect(),
             self.width,
             self.height,
         )
@@ -131,7 +148,7 @@ fn compress_jpeg(image: &Image, quality: u8) -> CompressResult {
     cinfo.start_compress();
     if !match image.color_space {
         ColorSpace::Gray => cinfo.write_scanlines(image.to_gray().buf().as_bytes()),
-        _ => cinfo.write_scanlines(image.to_rgb().buf().as_bytes()),
+        _ => cinfo.write_scanlines(image.to_rgb(RGB8::new(255, 255, 255)).buf().as_bytes()),
     } {
         return Err("Failed to compress image data".to_string());
     }

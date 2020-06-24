@@ -124,6 +124,7 @@ You should do the resizing and optimization for each size independently.
 ### Reading
 
 - [Essential Image Optimization](https://images.guide/): comprehensive e-book on image formats and optimization techniques
+- [Is WebP really better than JPEG?](https://siipo.la/blog/is-webp-really-better-than-jpeg) compares different images formats at the same SSIM index
 
 ## License
 

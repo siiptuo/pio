@@ -411,14 +411,6 @@ fn validate_quality(x: String) -> Result<(), String> {
     }
 }
 
-fn validate_format(x: String) -> Result<(), String> {
-    if Format::from_str(&x).is_none() {
-        Err("supported formats are jpeg, png and webp".to_string())
-    } else {
-        Ok(())
-    }
-}
-
 fn parse_color(input: &str) -> Result<RGB8, String> {
     if !input.starts_with("#") {
         return Err("color must start #".to_string());
@@ -446,8 +438,9 @@ fn main() {
             Arg::with_name("input-format")
                 .long("input-format")
                 .help("Sets input file format")
+                .value_name("format")
                 .takes_value(true)
-                .validator(validate_format),
+                .possible_values(&["jpeg", "png", "webp"]),
         )
         .arg(
             Arg::with_name("output")
@@ -460,8 +453,9 @@ fn main() {
             Arg::with_name("output-format")
                 .long("output-format")
                 .help("Sets output file format")
+                .value_name("format")
                 .takes_value(true)
-                .validator(validate_format),
+                .possible_values(&["jpeg", "png", "webp"]),
         )
         .arg(
             Arg::with_name("quality")

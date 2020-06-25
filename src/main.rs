@@ -36,7 +36,7 @@ fn distance(a: u8, b: u8) -> u8 {
 }
 
 fn is_gray(color: RGB8) -> bool {
-    distance(color.r, color.g) <= 1 && distance(color.r, color.b) <= 1
+    distance(color.r, color.g) <= 1 && distance(color.g, color.b) <= 1
 }
 
 impl Image {
@@ -66,7 +66,7 @@ impl Image {
 
     fn to_gray(&self) -> ImgVec<GRAY8> {
         Img::new(
-            self.data.iter().map(|c| c.r.into()).collect(),
+            self.data.iter().map(|c| c.g.into()).collect(),
             self.width,
             self.height,
         )

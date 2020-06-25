@@ -475,42 +475,47 @@ fn main() {
         )
         .get_matches();
 
-    let (input_format, input_buffer) = match matches.value_of("INPUT") {
-        None | Some("-") => {
-            let format = Format::from_str(matches.value_of("input-format").unwrap_or_else(|| {
-                eprintln!("--input-format is required when reading from standard input");
-                std::process::exit(1);
-            }))
-            .unwrap();
-            let mut buffer = Vec::new();
-            std::io::stdin()
-                .read_to_end(&mut buffer)
-                .unwrap_or_else(|err| {
-                    eprintln!("failed to read standard input: {}", err);
+    let (input_format, input_buffer) =
+        match matches
+            .value_of_os("INPUT")
+            .and_then(|s| if s == "-" { None } else { Some(s) })
+        {
+            None => {
+                let format =
+                    Format::from_str(matches.value_of("input-format").unwrap_or_else(|| {
+                        eprintln!("--input-format is required when reading from standard input");
+                        std::process::exit(1);
+                    }))
+                    .unwrap();
+                let mut buffer = Vec::new();
+                std::io::stdin()
+                    .read_to_end(&mut buffer)
+                    .unwrap_or_else(|err| {
+                        eprintln!("failed to read standard input: {}", err);
+                        std::process::exit(1);
+                    });
+                (format, buffer)
+            }
+            Some(path) => {
+                let format = match matches.value_of("input-format") {
+                    Some(format) => Format::from_str(format).unwrap(),
+                    None => Format::detect(path).unwrap_or_else(|| {
+                        eprintln!("unknown input file extension, expected jpeg, png or webp");
+                        std::process::exit(1);
+                    }),
+                };
+                let buffer = std::fs::read(path).unwrap_or_else(|err| {
+                    eprintln!("failed to read input file: {}", err);
                     std::process::exit(1);
                 });
-            (format, buffer)
-        }
-        Some(path) => {
-            let format = match matches.value_of("input-format") {
-                Some(format) => Format::from_str(format).unwrap(),
-                None => Format::detect(path).unwrap_or_else(|| {
-                    eprintln!("unknown input file extension, expected jpeg, png or webp");
-                    std::process::exit(1);
-                }),
-            };
-            let buffer = std::fs::read(path).unwrap_or_else(|err| {
-                eprintln!("failed to read input file: {}", err);
-                std::process::exit(1);
-            });
-            (format, buffer)
-        }
-    };
+                (format, buffer)
+            }
+        };
 
     let original_size = input_buffer.len();
 
     let (output_format, mut output_writer): (Format, Box<dyn std::io::Write>) = match matches
-        .value_of("output")
+        .value_of_os("output")
     {
         Some(path) => {
             let format = match matches.value_of("output-format") {

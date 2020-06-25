@@ -137,7 +137,7 @@ fn read_jpeg(buffer: &[u8]) -> ReadResult {
     Ok(Image::from_rgb(data, width, height))
 }
 
-fn compress_jpeg(image: &Image, quality: u8) -> CompressResult {
+fn compress_jpeg(image: &Image, quality: u8, bg: RGB8) -> CompressResult {
     let mut cinfo = mozjpeg::Compress::new(match image.color_space {
         ColorSpace::Gray => mozjpeg::ColorSpace::JCS_GRAYSCALE,
         _ => mozjpeg::ColorSpace::JCS_RGB,
@@ -148,7 +148,7 @@ fn compress_jpeg(image: &Image, quality: u8) -> CompressResult {
     cinfo.start_compress();
     if !match image.color_space {
         ColorSpace::Gray => cinfo.write_scanlines(image.to_gray().buf().as_bytes()),
-        _ => cinfo.write_scanlines(image.to_rgb(RGB8::new(255, 255, 255)).buf().as_bytes()),
+        _ => cinfo.write_scanlines(image.to_rgb(bg).buf().as_bytes()),
     } {
         return Err("Failed to compress image data".to_string());
     }
@@ -165,7 +165,7 @@ fn read_png(buffer: &[u8]) -> ReadResult {
     Ok(Image::from_rgba(png.buffer, png.width, png.height))
 }
 
-fn compress_png(image: &Image, quality: u8) -> CompressResult {
+fn compress_png(image: &Image, quality: u8, _bg: RGB8) -> CompressResult {
     let (palette, pixels) = {
         let mut liq = imagequant::new();
         liq.set_quality(0, quality as u32);
@@ -233,7 +233,7 @@ fn read_webp(buffer: &[u8]) -> ReadResult {
     Ok(Image::from_rgba(data, width as usize, height as usize))
 }
 
-fn compress_webp(image: &Image, quality: u8) -> CompressResult {
+fn compress_webp(image: &Image, quality: u8, _bg: RGB8) -> CompressResult {
     unsafe {
         let mut config = MaybeUninit::<WebPConfig>::uninit();
         let ret = WebPConfigInitInternal(
@@ -331,11 +331,12 @@ impl Format {
 
 fn compress_image(
     image: Image,
-    compressor: impl Fn(&Image, u8) -> CompressResult,
+    compressor: impl Fn(&Image, u8, RGB8) -> CompressResult,
     target: f64,
     min_quality: u8,
     max_quality: u8,
     original_size: u64,
+    bg: RGB8,
 ) -> Result<Vec<u8>, String> {
     let attr = Dssim::new();
     let original = attr
@@ -349,7 +350,7 @@ fn compress_image(
 
     loop {
         let quality = (min + max) / 2;
-        let (a, b) = compressor(&image, quality)?;
+        let (a, b) = compressor(&image, quality, bg)?;
         compressed = a;
         buffer = b;
 
@@ -418,6 +419,20 @@ fn validate_format(x: String) -> Result<(), String> {
     }
 }
 
+fn parse_color(input: &str) -> Result<RGB8, String> {
+    if !input.starts_with("#") {
+        return Err("color must start #".to_string());
+    }
+    if input.len() != 7 {
+        return Err("color must have 7 characters".to_string());
+    }
+    Ok(RGB8::new(
+        u8::from_str_radix(&input[1..=2], 16).map_err(|err| err.to_string())?,
+        u8::from_str_radix(&input[3..=4], 16).map_err(|err| err.to_string())?,
+        u8::from_str_radix(&input[5..=6], 16).map_err(|err| err.to_string())?,
+    ))
+}
+
 fn main() {
     let matches = App::new("pio")
         .about("Perceptual Image Optimizer")
@@ -472,6 +487,15 @@ fn main() {
                 .help("Sets maximum quality for output")
                 .takes_value(true)
                 .validator(validate_quality),
+        )
+        .arg(
+            Arg::with_name("background-color")
+                .long("background-color")
+                .value_name("color")
+                .help("Set background color to use when output format doesn't support transparency")
+                .takes_value(true)
+                .default_value("#ffffff")
+                .validator(|x| parse_color(&x).map(|_| ())),
         )
         .get_matches();
 
@@ -558,6 +582,8 @@ fn main() {
         std::process::exit(1);
     }
 
+    let bg = parse_color(matches.value_of("background-color").unwrap()).unwrap();
+
     let input_image = match match input_format {
         Format::JPEG => read_jpeg(&input_buffer),
         Format::PNG => read_png(&input_buffer),
@@ -583,6 +609,7 @@ fn main() {
         min,
         max,
         original_size as u64,
+        bg,
     ) {
         Ok(output_buffer) => {
             if output_buffer.len() < original_size as usize {

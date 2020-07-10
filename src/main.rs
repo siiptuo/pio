@@ -100,6 +100,35 @@ impl Image {
     fn as_bytes(&self) -> &[u8] {
         self.data.as_bytes()
     }
+
+    fn into_image_rs(self) -> image::RgbaImage {
+        image::RgbaImage::from_raw(self.width as u32, self.height as u32, unsafe {
+            let mut v_clone = std::mem::ManuallyDrop::new(self.data);
+            Vec::from_raw_parts(
+                v_clone.as_mut_ptr() as *mut u8,
+                v_clone.len() * 4,
+                v_clone.capacity() * 4,
+            )
+        })
+        .unwrap()
+    }
+
+    fn from_image_rs(image: image::RgbaImage) -> Self {
+        let width = image.width();
+        let height = image.height();
+        Self::from_rgba(
+            unsafe {
+                let mut v_clone = std::mem::ManuallyDrop::new(image.into_raw());
+                Vec::from_raw_parts(
+                    v_clone.as_mut_ptr() as *mut RGBA8,
+                    v_clone.len() / 4,
+                    v_clone.capacity() / 4,
+                )
+            },
+            width as usize,
+            height as usize,
+        )
+    }
 }
 
 type ReadResult = Result<Image, String>;
@@ -125,6 +154,31 @@ const QUALITY_SSIM: [f64; 101] = [
     0.0009805, 0.000749, 0.000548, 0.0004,
 ];
 
+// Rotate and flip image according to Exif orientation.
+fn orient_image(image: Image, orientation: u32) -> Image {
+    if orientation == 1 {
+        return image;
+    }
+    let mut output = image.into_image_rs();
+    match orientation {
+        2 => image::imageops::flip_horizontal_in_place(&mut output),
+        3 => image::imageops::rotate180_in_place(&mut output),
+        4 => image::imageops::flip_vertical_in_place(&mut output),
+        5 => {
+            output = image::imageops::rotate90(&output);
+            image::imageops::flip_horizontal_in_place(&mut output);
+        }
+        6 => output = image::imageops::rotate90(&output),
+        7 => {
+            output = image::imageops::rotate90(&output);
+            image::imageops::flip_vertical_in_place(&mut output);
+        }
+        8 => output = image::imageops::rotate270(&output),
+        _ => unreachable!(),
+    }
+    Image::from_image_rs(output)
+}
+
 fn read_jpeg(buffer: &[u8]) -> ReadResult {
     let dinfo = mozjpeg::Decompress::new_mem(buffer).map_err(|err| err.to_string())?;
     let mut rgb = dinfo.rgb().map_err(|err| err.to_string())?;
@@ -134,7 +188,20 @@ fn read_jpeg(buffer: &[u8]) -> ReadResult {
         .read_scanlines()
         .ok_or_else(|| "Failed decode image data".to_string())?;
     rgb.finish_decompress();
-    Ok(Image::from_rgb(data, width, height))
+    let orientation = exif::Reader::new()
+        .read_from_container(&mut std::io::Cursor::new(buffer))
+        .ok()
+        .and_then(
+            |exif| match exif.get_field(exif::Tag::Orientation, exif::In::PRIMARY) {
+                Some(field) => field.value.get_uint(0).filter(|x| *x >= 1 && *x <= 8),
+                None => None,
+            },
+        )
+        .unwrap_or(1);
+    Ok(orient_image(
+        Image::from_rgb(data, width, height),
+        orientation,
+    ))
 }
 
 fn compress_jpeg(image: &Image, quality: u8, bg: RGB8) -> CompressResult {

@@ -3,6 +3,7 @@
 
 use clap::{App, Arg};
 use dssim::{Dssim, ToRGBAPLU, RGBAPLU};
+use image::imageops::FilterType;
 use imgref::{Img, ImgVec};
 use libwebp_sys::*;
 use rgb::{alt::GRAY8, ComponentBytes, RGB8, RGBA8};
@@ -425,6 +426,132 @@ fn parse_color(input: &str) -> Result<RGB8, String> {
     ))
 }
 
+fn parse_dimensions(input: &str) -> Result<(usize, usize), String> {
+    fn parse(input: &str) -> Result<usize, String> {
+        if input.len() == 0 {
+            Ok(0)
+        } else {
+            match input.parse::<usize>().map_err(|err| err.to_string())? {
+                0 => Err("expected non-zero integer".to_string()),
+                x => Ok(x),
+            }
+        }
+    };
+    match input.find('x') {
+        Some(pos) => match (parse(&input[..pos])?, parse(&input[pos + 1..])?) {
+            (0, 0) => Err("invalid format".to_string()),
+            (width, height) => Ok((width, height)),
+        },
+        None => Err("invalid format".to_string()),
+    }
+}
+
+enum ResizeType {
+    Contain,
+    Cover,
+    Stretch,
+}
+
+fn resize_image(
+    image: Image,
+    width: usize,
+    height: usize,
+    tpy: ResizeType,
+    filter: FilterType,
+    upscale: bool,
+) -> Image {
+    use rgb::FromSlice;
+
+    let crop = |image: Image, x, y, width, height| {
+        let mut output = image::RgbaImage::from_raw(
+            image.width as u32,
+            image.height as u32,
+            image.as_bytes().to_vec(),
+        )
+        .unwrap();
+        image::imageops::crop(&mut output, x, y, width, height);
+        Image::from_rgba(
+            output.into_raw().as_rgba().to_vec(),
+            width as usize,
+            height as usize,
+        )
+    };
+
+    let resize = |image: Image, width, height| {
+        if upscale || (width < image.width as u32 && height < image.height as u32) {
+            let input = image::RgbaImage::from_raw(
+                image.width as u32,
+                image.height as u32,
+                image.as_bytes().to_vec(),
+            )
+            .unwrap();
+            let output = image::imageops::resize(&input, width, height, filter);
+            Image::from_rgba(
+                output.into_raw().as_rgba().to_vec(),
+                width as usize,
+                height as usize,
+            )
+        } else {
+            eprintln!("Note: Image is not resized because its resolution is smaller than the given dimensions.\n      You can enable upscaling with `--allow-upscale` option.");
+            image
+        }
+    };
+
+    let src_aspect = image.width as f32 / image.height as f32;
+    let src_aspect_inv = image.height as f32 / image.width as f32;
+    match (width as u32, height as u32) {
+        (width, 0) => resize(
+            image,
+            width,
+            std::cmp::max(1, (width as f32 * src_aspect_inv).round() as u32),
+        ),
+        (0, height) => resize(
+            image,
+            std::cmp::max(1, (height as f32 * src_aspect).round() as u32),
+            height,
+        ),
+        (width, height) => {
+            let dst_aspect = width as f32 / height as f32;
+            let dst_aspect_inv = height as f32 / width as f32;
+            match tpy {
+                ResizeType::Contain => {
+                    if dst_aspect < src_aspect {
+                        resize(
+                            image,
+                            width,
+                            std::cmp::max(1, (width as f32 * src_aspect_inv).round() as u32),
+                        )
+                    } else {
+                        resize(
+                            image,
+                            std::cmp::max(1, (height as f32 * src_aspect).round() as u32),
+                            height,
+                        )
+                    }
+                }
+                ResizeType::Cover => resize(
+                    if dst_aspect < src_aspect {
+                        let crop_width =
+                            std::cmp::max(1, (image.height as f32 * dst_aspect).round() as u32);
+                        let crop_height = image.height as u32;
+                        let crop_x = (image.width as u32 - crop_width) / 2;
+                        crop(image, crop_x, 0, crop_width, crop_height)
+                    } else {
+                        let crop_width = image.width as u32;
+                        let crop_height =
+                            std::cmp::max(1, (image.width as f32 * dst_aspect_inv).round() as u32);
+                        let crop_y = (image.height as u32 - crop_height) / 2;
+                        crop(image, 0, crop_y, crop_width, crop_height)
+                    },
+                    width,
+                    height,
+                ),
+                ResizeType::Stretch => resize(image, width, height),
+            }
+        }
+    }
+}
+
 fn main() {
     let matches = App::new("pio")
         .about("Perceptual Image Optimizer")
@@ -490,6 +617,38 @@ fn main() {
                 .takes_value(true)
                 .default_value("#ffffff")
                 .validator(|x| parse_color(&x).map(|_| ())),
+        )
+        .arg(
+            Arg::with_name("resize")
+                .long("resize")
+                .value_name("WIDTHxHEIGHT")
+                .help("Resize image to the given pixel resolution")
+                .takes_value(true)
+                .validator(|x| parse_dimensions(&x).map(|_| ())),
+        )
+        .arg(
+            Arg::with_name("resize-type")
+                .long("resize-type")
+                .value_name("type")
+                .help("Sets how to fit image to the given resolution")
+                .default_value("contain")
+                .possible_values(&["contain", "cover", "stretch"])
+                .requires("resize"),
+        )
+        .arg(
+            Arg::with_name("resize-filter")
+                .long("resize-filter")
+                .value_name("filter")
+                .help("Sets sampling filter used for resizing")
+                .default_value("lanczos3")
+                .possible_values(&["nearest", "triangle", "catmull-rom", "gaussian", "lanczos3"])
+                .requires("resize"),
+        )
+        .arg(
+            Arg::with_name("allow-upscale")
+                .long("allow-upscale")
+                .help("Upscale image smaller than the given resolution")
+                .requires("resize"),
         )
         .get_matches();
 
@@ -578,7 +737,7 @@ fn main() {
 
     let bg = parse_color(matches.value_of("background-color").unwrap()).unwrap();
 
-    let input_image = match match input_format {
+    let mut input_image = match match input_format {
         Format::JPEG => read_jpeg(&input_buffer),
         Format::PNG => read_png(&input_buffer),
         Format::WEBP => read_webp(&input_buffer),
@@ -595,6 +754,26 @@ fn main() {
         Format::PNG => compress_png,
         Format::WEBP => compress_webp,
     };
+
+    if let Some(input) = matches.value_of("resize") {
+        let resize_type = match matches.value_of("resize-type").unwrap() {
+            "contain" => ResizeType::Contain,
+            "cover" => ResizeType::Cover,
+            "stretch" => ResizeType::Stretch,
+            _ => unreachable!(),
+        };
+        let filter = match matches.value_of("resize-filter").unwrap() {
+            "nearest" => FilterType::Nearest,
+            "triangle" => FilterType::Triangle,
+            "catmull-rom" => FilterType::CatmullRom,
+            "gaussian" => FilterType::Gaussian,
+            "lanczos3" => FilterType::Lanczos3,
+            _ => unreachable!(),
+        };
+        let upscale = matches.is_present("allow-upscale");
+        let (width, height) = parse_dimensions(input).unwrap();
+        input_image = resize_image(input_image, width, height, resize_type, filter, upscale);
+    }
 
     match compress_image(
         input_image,

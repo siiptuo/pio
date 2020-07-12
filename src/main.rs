@@ -209,7 +209,15 @@ fn exif_orientation(exif: exif::Exif) -> Option<u32> {
 }
 
 fn read_jpeg(buffer: &[u8]) -> ReadResult {
-    let dinfo = mozjpeg::Decompress::new_mem(buffer).map_err(|err| err.to_string())?;
+    let dinfo = mozjpeg::Decompress::with_markers(&[mozjpeg::Marker::APP(2)])
+        .from_mem(buffer)
+        .map_err(|err| err.to_string())?;
+
+    let icc = dinfo
+        .markers()
+        .find(|marker| marker.data.starts_with(b"ICC_PROFILE\0"));
+    eprintln!("jpeg icc: {}", icc.is_some());
+
     let mut rgb = dinfo.rgb().map_err(|err| err.to_string())?;
     let width = rgb.width();
     let height = rgb.height();
@@ -217,11 +225,13 @@ fn read_jpeg(buffer: &[u8]) -> ReadResult {
         .read_scanlines()
         .ok_or_else(|| "Failed decode image data".to_string())?;
     rgb.finish_decompress();
+
     let orientation = exif::Reader::new()
         .read_from_container(&mut std::io::Cursor::new(buffer))
         .ok()
         .and_then(exif_orientation)
         .unwrap_or(1);
+
     Ok(orient_image(
         Image::from_rgb(data, width, height),
         orientation,
@@ -255,17 +265,23 @@ fn read_png(buffer: &[u8]) -> ReadResult {
     let mut decoder = lodepng::Decoder::new();
     decoder.remember_unknown_chunks(true);
     decoder.info_raw_mut().colortype = lodepng::ColorType::RGBA;
+
     let png = match decoder.decode(&buffer) {
         Ok(lodepng::Image::RGBA(data)) => data,
         Ok(_) => return Err("Color conversion failed".to_string()),
         Err(err) => return Err(err.to_string()),
     };
+
     let orientation = decoder
         .info_png()
         .get("eXIf")
         .and_then(|raw| exif::Reader::new().read_raw(raw.data().to_vec()).ok())
         .and_then(exif_orientation)
         .unwrap_or(1);
+
+    let icc = decoder.get_icc().ok();
+    eprintln!("png icc: {}", icc.is_some());
+
     Ok(orient_image(
         Image::from_rgba(png.buffer, png.width, png.height),
         orientation,
@@ -358,6 +374,18 @@ fn read_webp(buffer: &[u8]) -> ReadResult {
             error => return Err(format!("error while reading EXIF chunk: {:?}", error)),
         };
         let orientation = exif.and_then(exif_orientation).unwrap_or(1);
+
+        let mut icc = MaybeUninit::uninit();
+        let ret = WebPMuxGetChunk(mux, b"ICCP" as *const _ as *const _, icc.as_mut_ptr());
+        let icc_data = match ret {
+            WebPMuxError::WEBP_MUX_OK => {
+                let icc = icc.assume_init();
+                Some(std::slice::from_raw_parts(icc.bytes, icc.size))
+            }
+            WebPMuxError::WEBP_MUX_NOT_FOUND => None,
+            error => return Err(format!("{:?}", error)),
+        };
+        eprintln!("webp icc: {}", icc_data.is_some());
 
         WebPMuxDelete(mux);
 

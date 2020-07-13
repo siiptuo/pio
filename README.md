@@ -11,7 +11,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 [![reuse compliant](https://reuse.software/badge/reuse-compliant.svg)](https://reuse.software)
 
 `pio` is a command-line utility to compress image files while maintaining the same perceived quality.
-It's designed to automatically optimize images for the web.
+It's designed primarily to optimize photographs for the web.
 
 ## Features
 
@@ -24,14 +24,14 @@ It lacks some important features like proper color management support.
 
 ## Background
 
-Images are an important part of the web but they usually use a lot of bandwidth (see HTTP Archive's [Page Weight](https://httparchive.org/reports/page-weight) for statistics).
+Images are an important part of the web, but they usually use a lot of bandwidth (see HTTP Archive's [Page Weight](https://httparchive.org/reports/page-weight) for statistics).
 Optimizing images makes them smaller and thus faster to load.
 
 How much should you optimize images?
 Many image editors and optimization tools only give you parameters such as quality or file size.
 You could use the same parameters for each image.
 This will certainly optimize your images but may not be optimal for all images.
-You could also specify parameters by hand for each image but this isn't feasible if there are many images or they are uploaded by end users.
+You could also specify parameters by hand for each image but this isn't feasible if there are many images, or if images are uploaded by end users.
 
 `pio` simplifies image optimization by finding optimal parameters automatically.
 This is done by optimizing the input image with different qualities and comparing [structural similarity (SSIM)](https://en.wikipedia.org/wiki/Structural_similarity).
@@ -41,9 +41,8 @@ This is done by optimizing the input image with different qualities and comparin
 Here we can see that `pio` finds different quality parameter for different images (using default settings).
 In general images with a lot of details require higher quality than those with fewer details.
 
-However `pio` is not perfect.
-For instance optimized JPEG of the first image is quite heavily compressed.
-This is fine for the mostly solid sky but not for the bridge with more details.
+However, `pio` is not perfect: for example some JPEG artifacts are visible in the first example image.
+In this case the quality setting is optimized for the solid sky covering most of the image but not the finer details of the bridge.
 
 | Original                                                                                                                                                                                                                                                                          | Optimized JPEG                                                          | Optimized WebP                                                          |
 | -                                                                                                                                                                                                                                                                                 | -                                                                       | -                                                                       |
@@ -60,7 +59,7 @@ There are two versions for Linux: glibc and musl.
 glibc version is about 50% faster than musl version but may not work on old and non-glibc-based distributions.
 glibc version is built on Ubuntu 18.04 against glibc 2.27.
 
-Otherwise download and compile the source code.
+Otherwise, download and compile the source code.
 This requires Rust and C toolchains.
 Run `cargo build --release` to build binary at `target/release/pio`.
 
@@ -85,8 +84,8 @@ For the full list of available options, run `pio --help`.
 ### Input images
 
 `pio` works by comparing the optimized image to the input image.
-The input image should preferably be PNG or alternatively JPEG or WebP stored with quality 100.
-`pio` will make already lossy compressed images worse.
+The input image should preferably be PNG or lossless WebP, or alternatively JPEG or lossy WebP stored with a high quality setting (95-100).
+`pio` will make already lossy compressed images look worse.
 
 For the web, you typically want to resize a high-resolution source image to a smaller image.
 For the best result, first resize the high-resolution image and store the resulting image with lossless compression.
@@ -104,11 +103,11 @@ You should do the resizing and optimization for each size independently.
 
 ### Quality setting explained
 
-`pio` uses an internal table to map target `--quality` setting to SSIM value. This table has been calculated by running a corpus of image through JPEG encoder and calculating the average SSIM value for each JPEG quality setting.
+`pio` uses an internal table to map target `--quality` setting to SSIM value. This table has been calculated by running a corpus of images through JPEG encoder and calculating the average SSIM value for each JPEG quality setting.
 
 This makes it possible to target the quality using a familiar 0-100 scale instead of a more obscure SSIM value.
 
-`pio` sets the minimum and maximum quality automatically based on the `--quality` argement. You can control the quality spread from the target using the `--spread` argument. For example the following command:
+`pio` sets the minimum and maximum quality automatically based on the `--quality` argument. You can control the quality spread from the target using the `--spread` argument. For example the following command:
 
 ```
 pio input.jpeg --quality 80 --spread 10 --output output.jpeg

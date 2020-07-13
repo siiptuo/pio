@@ -478,6 +478,19 @@ fn validate_quality(x: String) -> Result<(), String> {
     }
 }
 
+fn validate_spread(x: String) -> Result<(), String> {
+    match x.parse::<i8>() {
+        Ok(x) => {
+            if (0..=100).contains(&x) {
+                Ok(())
+            } else {
+                Err("expected value between 0 and 100".to_string())
+            }
+        }
+        Err(_) => Err("expected value between 0 and 100".to_string()),
+    }
+}
+
 fn parse_color(input: &str) -> Result<RGB8, String> {
     if !input.starts_with("#") {
         return Err("color must start #".to_string());
@@ -548,6 +561,15 @@ fn main() {
                 .help("Sets maximum quality for output")
                 .takes_value(true)
                 .validator(validate_quality),
+        )
+        .arg(
+            Arg::with_name("spread")
+                .long("spread")
+                .value_name("spread")
+                .help("Sets deviation from the quality target")
+                .default_value("10")
+                .takes_value(true)
+                .validator(validate_spread),
         )
         .arg(
             Arg::with_name("background-color")
@@ -628,15 +650,17 @@ fn main() {
 
     let quality = matches.value_of("quality").unwrap().parse::<u8>().unwrap();
 
+    let spread = matches.value_of("spread").unwrap().parse::<u8>().unwrap();
+
     let target = QUALITY_SSIM[quality as usize];
 
     let min = match matches.value_of("min") {
         Some(s) => s.parse().unwrap(),
-        None => std::cmp::max(0, quality - 10),
+        None => std::cmp::max(0, quality - std::cmp::min(quality, spread)),
     };
     let max = match matches.value_of("max") {
         Some(s) => s.parse().unwrap(),
-        None => std::cmp::min(quality + 10, 100),
+        None => std::cmp::min(quality + spread, 100),
     };
     if min > max {
         eprintln!("min must be smaller or equal to max");

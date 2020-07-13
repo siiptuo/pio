@@ -1,0 +1,94 @@
+# SPDX-FileCopyrightText: 2020 Johannes Siipola
+# SPDX-FileCopyrightText: 2020 Tuomas Siipola
+#
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+name: Rust
+
+on: [push]
+
+jobs:
+  reuse:
+
+    runs-on: ubuntu-18.04
+
+    steps:
+      - uses: actions/checkout@v2
+      - name: REUSE Compliance Check
+        uses: fsfe/reuse-action@v1.1
+
+  build:
+
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-18.04, macos-10.15]
+
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install
+        run: sudo apt install musl-tools -y
+        if: runner.os == 'Linux'
+      - name: Add target (Linux)
+        run: rustup target add x86_64-unknown-linux-musl
+        if: runner.os == 'Linux'
+      - name: Add target (Mac)
+        run: rustup target add x86_64-apple-darwin
+        if: runner.os == 'macOS'
+      - name: Build
+        run: rustup component add clippy rustfmt
+      - name: Build (Linux-gnu)
+        run: cargo build --release --target=x86_64-unknown-linux-gnu
+        if: runner.os == 'Linux'
+      - name: Build (Linux-musl)
+        run: cargo build --release --target=x86_64-unknown-linux-musl
+        if: runner.os == 'Linux'
+      - name: Build (Mac)
+        run: cargo build --release --target=x86_64-apple-darwin
+        if: runner.os == 'macOS'
+      - name: Build
+        run: cargo clippy
+      - name: Build
+        run: cargo fmt --all -- --check
+      - name: Upload (Mac)
+        uses: actions/upload-artifact@v1
+        if: runner.os == 'macOS'
+        with:
+          name: pio-x86_64-apple-darwin
+          path: target/x86_64-apple-darwin/release/pio
+      - name: Upload (Linux-gnu)
+        uses: actions/upload-artifact@v1
+        if: runner.os == 'Linux'
+        with:
+          name: pio-x86_64-unknown-linux-gnu
+          path: target/x86_64-unknown-linux-gnu/release/pio
+      - name: Upload (Linux-musl)
+        uses: actions/upload-artifact@v1
+        if: runner.os == 'Linux'
+        with:
+          name: pio-x86_64-unknown-linux-musl
+          path: target/x86_64-unknown-linux-musl/release/pio
+      - name: Move (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          mv target/x86_64-unknown-linux-gnu/release/pio pio-x86_64-unknown-linux-gnu
+          mv target/x86_64-unknown-linux-musl/release/pio pio-x86_64-unknown-linux-musl
+      - name: Move (Mac)
+        if: runner.os == 'macOS'
+        run: mv target/x86_64-apple-darwin/release/pio pio-x86_64-apple-darwin
+      - name: Release (Mac)
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/') && runner.os == 'macOS'
+        with:
+          files: pio-x86_64-apple-darwin
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Release (Linux)
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/') && runner.os == 'Linux'
+        with:
+          files: |
+            pio-x86_64-unknown-linux-gnu
+            pio-x86_64-unknown-linux-musl
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

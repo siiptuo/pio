@@ -102,6 +102,22 @@ $ pio small.png --output optimized.jpeg
 Most likely you also want to use [responsive images](https://developer.mozilla.org/en-US/docs/Learn/HTML/Multimedia_and_embedding/Responsive_images) where you create multiple differently sized images for different display resolutions.
 You should do the resizing and optimization for each size independently.
 
+### Quality setting explained
+
+`pio` uses an internal table to map target `--quality` setting to SSIM value. This table has been calculated by running a corpus of image through JPEG encoder and calculating the average SSIM value for each JPEG quality setting.
+
+This makes it possible to target the quality using a familiar 0-100 scale instead of a more obscure SSIM value.
+
+`pio` sets the minimum and maximum quality automatically based on the `--quality` argement. You can control the quality spread from the target using the `--spread` argument. For example the following command:
+
+```
+pio input.jpeg --quality 80 --spread 10 --output output.jpeg
+```
+
+will target JPEG quality of 80 with the minimum quality of 70 and maximum quality of 90. The final quality setting will be selected by the SSIM calculation and it will depend on the complexity of the image.
+
+If you need, you can override this automatic calculation by specifying `--min` and/or `--max` values manually.
+
 ## Links
 
 ### Integrations

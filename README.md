@@ -52,15 +52,32 @@ In this case the quality setting is optimized for the solid sky covering most of
 
 ## Installation
 
-Download the latest binary from [GitHub releases](https://github.com/siiptuo/pio/releases).
-Store the binary somewhere on your `PATH` like `/usr/local/bin/pio`.
+### Linux
 
-There are two versions for Linux: glibc and musl.
+Download the latest Linux binary from [GitHub releases](https://github.com/siiptuo/pio/releases).
+
+There are two versions: glibc and musl.
 glibc version is about 50% faster than musl version but may not work on old and non-glibc-based distributions.
-glibc version is built on Ubuntu 18.04 against glibc 2.27.
+For reference, the glibc version is built on Ubuntu 18.04 against glibc 2.27.
 
-Otherwise, download and compile the source code.
-This requires Rust and C toolchains.
+After downloading the binary, run `chmod +x path-to-pio` to make it executable.
+Consider storing the binary somewhere on your `PATH` like `/usr/local/bin/pio`.
+
+### macOS
+
+Download the latest macOS binary from [GitHub releases](https://github.com/siiptuo/pio/releases).
+
+After downloading the file, run `chmod +x path-to-pio` in your terminal to make it executable.
+Now try running `./path-to-pio --version`.
+
+If you get an error like "pio cannot be opened because the developer cannot be verified", open "System Preferences" section "Security & Privacy" tab "General" and click "Allow Anyway".
+Now you should be able to run `pio`.
+For more information, see [Safely open apps on your Mac](https://support.apple.com/en-us/HT202491) by Apple.
+
+### Building from source
+
+Download source code from [GitHub releases](https://github.com/siiptuo/pio/releases) or clone this repository for development version.
+Compiling `pio` requires Rust and C toolchains.
 Run `cargo build --release` to build binary at `target/release/pio`.
 
 ## Usage

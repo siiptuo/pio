@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: 2020 Tuomas Siipola
 # SPDX-License-Identifier: AGPL-3.0-or-later
 set -e
+export LC_ALL=C
 
 URLS=(
     "https://s3-us-west-1.amazonaws.com/photos.snapwi.re/Week+88/Josh+Felise.jpg"

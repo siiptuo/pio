@@ -314,6 +314,7 @@ fn compress_webp(image: &Image, quality: u8, _bg: RGB8) -> CompressResult {
         }
         let mut config = config.assume_init();
         config.method = 6;
+        config.use_sharp_yuv = 1;
 
         let mut wrt = MaybeUninit::<WebPMemoryWriter>::uninit();
         WebPMemoryWriterInit(wrt.as_mut_ptr());
@@ -329,6 +330,7 @@ fn compress_webp(image: &Image, quality: u8, _bg: RGB8) -> CompressResult {
         pic.height = image.height as i32;
         pic.writer = Some(WebPMemoryWrite);
         pic.custom_ptr = &mut wrt as *mut _ as *mut std::ffi::c_void;
+        pic.use_argb = 1;
 
         let stride = image.width as i32 * 4;
         let ret = WebPPictureImportRGBA(&mut pic, image.as_bytes().as_ptr(), stride);

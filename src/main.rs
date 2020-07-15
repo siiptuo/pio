@@ -381,7 +381,7 @@ enum Format {
 }
 
 impl Format {
-    fn from_str(input: &str) -> Option<Self> {
+    fn from_ext(input: &str) -> Option<Self> {
         match input {
             "jpeg" | "jpg" => Some(Self::JPEG),
             "png" => Some(Self::PNG),
@@ -390,11 +390,20 @@ impl Format {
         }
     }
 
-    fn detect(path: impl AsRef<Path>) -> Option<Self> {
+    fn from_path(path: impl AsRef<Path>) -> Option<Self> {
         path.as_ref()
             .extension()
             .and_then(OsStr::to_str)
-            .and_then(|ext| Self::from_str(&ext.to_ascii_lowercase()))
+            .and_then(|ext| Self::from_ext(&ext.to_ascii_lowercase()))
+    }
+
+    fn from_magic(buffer: &[u8]) -> Option<Self> {
+        match buffer {
+            [0xff, 0xd8, 0xff, ..] => Some(Self::JPEG),
+            [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, ..] => Some(Self::PNG),
+            [b'R', b'I', b'F', b'F', _, _, _, _, b'W', b'E', b'B', b'P', ..] => Some(Self::WEBP),
+            _ => None,
+        }
     }
 }
 
@@ -517,14 +526,6 @@ fn main() {
                 .index(1),
         )
         .arg(
-            Arg::with_name("input-format")
-                .long("input-format")
-                .help("Sets input file format")
-                .value_name("format")
-                .takes_value(true)
-                .possible_values(&["jpeg", "png", "webp"]),
-        )
-        .arg(
             Arg::with_name("output")
                 .long("output")
                 .short("o")
@@ -584,53 +585,14 @@ fn main() {
         )
         .get_matches();
 
-    let (input_format, input_buffer) =
-        match matches
-            .value_of_os("INPUT")
-            .and_then(|s| if s == "-" { None } else { Some(s) })
-        {
-            None => {
-                let format =
-                    Format::from_str(matches.value_of("input-format").unwrap_or_else(|| {
-                        eprintln!("--input-format is required when reading from standard input");
-                        std::process::exit(1);
-                    }))
-                    .unwrap();
-                let mut buffer = Vec::new();
-                std::io::stdin()
-                    .read_to_end(&mut buffer)
-                    .unwrap_or_else(|err| {
-                        eprintln!("failed to read standard input: {}", err);
-                        std::process::exit(1);
-                    });
-                (format, buffer)
-            }
-            Some(path) => {
-                let format = match matches.value_of("input-format") {
-                    Some(format) => Format::from_str(format).unwrap(),
-                    None => Format::detect(path).unwrap_or_else(|| {
-                        eprintln!("unknown input file extension, expected jpeg, png or webp");
-                        std::process::exit(1);
-                    }),
-                };
-                let buffer = std::fs::read(path).unwrap_or_else(|err| {
-                    eprintln!("failed to read input file: {}", err);
-                    std::process::exit(1);
-                });
-                (format, buffer)
-            }
-        };
-
-    let original_size = input_buffer.len();
-
     let (output_format, mut output_writer): (Format, Box<dyn std::io::Write>) = match matches
         .value_of_os("output")
     {
         Some(path) => {
             let format = match matches.value_of("output-format") {
-                Some(format) => Format::from_str(format).unwrap(),
-                None => Format::detect(path).unwrap_or_else(|| {
-                    eprintln!("unknown output file extension, expected jpeg, png or webp");
+                Some(format) => Format::from_ext(format).unwrap(),
+                None => Format::from_path(path).unwrap_or_else(|| {
+                    eprintln!("failed to determine output format: either use a known file extension (jpeg, png or webp) or specify the format using `--output-format`");
                     std::process::exit(1);
                 }),
             };
@@ -641,14 +603,42 @@ fn main() {
             (format, Box::new(output))
         }
         None => {
-            let format = Format::from_str(matches.value_of("output-format").unwrap_or_else(|| {
-                eprintln!("--output-format is required when writing to standard output");
+            let format = Format::from_ext(matches.value_of("output-format").unwrap_or_else(|| {
+                eprintln!("use `--output` to write to a file or `--output-format` to write to standard output");
                 std::process::exit(1);
             }))
             .unwrap();
             (format, Box::new(std::io::stdout()))
         }
     };
+
+    let input_buffer =
+        match matches
+            .value_of_os("INPUT")
+            .and_then(|s| if s == "-" { None } else { Some(s) })
+        {
+            None => {
+                let mut buffer = Vec::new();
+                std::io::stdin()
+                    .read_to_end(&mut buffer)
+                    .unwrap_or_else(|err| {
+                        eprintln!("failed to read standard input: {}", err);
+                        std::process::exit(1);
+                    });
+                buffer
+            }
+            Some(path) => std::fs::read(path).unwrap_or_else(|err| {
+                eprintln!("failed to read input file: {}", err);
+                std::process::exit(1);
+            }),
+        };
+
+    let input_format = Format::from_magic(&input_buffer).unwrap_or_else(|| {
+        eprintln!("unknown input format, expected jpeg, png or webp");
+        std::process::exit(1);
+    });
+
+    let original_size = input_buffer.len();
 
     let quality = matches.value_of("quality").unwrap().parse::<u8>().unwrap();
 

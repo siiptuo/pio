@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-FileCopyrightText: 2020 Tuomas Siipola
-# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-License-Identifier: CC0-1.0
 set -e
 export LC_ALL=C
 

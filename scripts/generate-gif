@@ -1,0 +1,22 @@
+#!/bin/bash
+# SPDX-FileCopyrightText: 2020 Tuomas Siipola
+# SPDX-License-Identifier: CC0-1.0
+set -e
+if [ ! -f images/chicken.jpg ]; then
+  curl -s 'https://upload.wikimedia.org/wikipedia/commons/d/de/Chicken_from_Venezuela.jpg' -o images/chicken.jpg
+fi
+convert images/chicken.jpg \
+  -crop 50x100+450+0% \
+  +repage \
+  -resize 100x100 \
+  -gravity south -font Z003-MediumItalic -pointsize 40 \
+    -fill black  -annotate +1-8 π \
+    -fill orange -annotate +0-6  π \
+  -mattecolor orange \
+  -frame 4x4+2+2 \
+  tmp.png
+for i in {1..10}; do
+  convert tmp.png -quality $((RANDOM%25)) "frame$i.jpg"
+done
+convert -delay 20 -loop 0 frame*.jpg images/pio.gif
+rm tmp.png frame*.jpg

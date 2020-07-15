@@ -5,6 +5,8 @@ SPDX-FileCopyrightText: 2020 Johannes Siipola
 SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 
+<img src="images/pio.gif" alt="" align="right">
+
 # Perceptual Image Optimizer
 
 ![Rust](https://github.com/siiptuo/pio/workflows/Rust/badge.svg)

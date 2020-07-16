@@ -10,6 +10,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Output grayscale JPEGs when possible.
+  These are smaller than color JPEGs.
+- Add background color if output format doesn't support transparency.
+  Set the background color using `--background-color` argument.
+- Handle Exif orientation of input file.
+  Rotate and flip the image data accordingly.
+- Add `--spread` argument to configure quality spread.
+  For example `--quality 80 --spread 10` will target JPEG quality of 80 with the minimum quality of 70 and maximum quality of 90.
+
+### Changed
+
+- Enable WebP sharp YUV option.
+  This results in sharper images with a bit of additional processing time and file size.
+  For more information, see <https://www.ctrl.blog/entry/webp-sharp-yuv.html>
+
+### Removed
+
+- `--input-format` argument is not needed anymore because input format is automatically detected based on magic number.
+
+### Fixed
+
+- Support non-UTF-8 filenames
+
 ## [0.3.1] - 2020-06-22
 
 ### Changed
@@ -87,6 +114,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Initial release
 
+[Unreleased]: https://github.com/siiptuo/pio/compare/0.3.1...HEAD
 [0.3.1]: https://github.com/siiptuo/pio/compare/0.3.0...0.3.1
 [0.3.0]: https://github.com/siiptuo/pio/compare/0.2.1...0.3.0
 [0.2.1]: https://github.com/siiptuo/pio/compare/0.2.0...0.2.1

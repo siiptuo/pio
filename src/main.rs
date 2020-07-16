@@ -179,6 +179,12 @@ fn orient_image(image: Image, orientation: u32) -> Image {
     Image::from_image_rs(output)
 }
 
+fn exif_orientation(exif: exif::Exif) -> Option<u32> {
+    exif.get_field(exif::Tag::Orientation, exif::In::PRIMARY)
+        .and_then(|field| field.value.get_uint(0))
+        .filter(|x| *x >= 1 && *x <= 8)
+}
+
 fn read_jpeg(buffer: &[u8]) -> ReadResult {
     let dinfo = mozjpeg::Decompress::new_mem(buffer).map_err(|err| err.to_string())?;
     let mut rgb = dinfo.rgb().map_err(|err| err.to_string())?;
@@ -191,12 +197,7 @@ fn read_jpeg(buffer: &[u8]) -> ReadResult {
     let orientation = exif::Reader::new()
         .read_from_container(&mut std::io::Cursor::new(buffer))
         .ok()
-        .and_then(
-            |exif| match exif.get_field(exif::Tag::Orientation, exif::In::PRIMARY) {
-                Some(field) => field.value.get_uint(0).filter(|x| *x >= 1 && *x <= 8),
-                None => None,
-            },
-        )
+        .and_then(exif_orientation)
         .unwrap_or(1);
     Ok(orient_image(
         Image::from_rgb(data, width, height),
@@ -270,34 +271,70 @@ fn compress_png(image: &Image, quality: u8, _bg: RGB8) -> CompressResult {
 }
 
 fn read_webp(buffer: &[u8]) -> ReadResult {
-    let mut width = 0;
-    let mut height = 0;
-
-    let ret = unsafe { WebPGetInfo(buffer.as_ptr(), buffer.len(), &mut width, &mut height) };
-    if ret == 0 {
-        return Err("Failed to decode file".to_string());
-    }
-
-    let len = (width * height) as usize;
-    let mut data: Vec<RGBA8> = Vec::with_capacity(len);
     unsafe {
-        data.set_len(len);
-    }
+        let data = WebPData {
+            bytes: buffer.as_ptr(),
+            size: buffer.len(),
+        };
 
-    let ret = unsafe {
-        WebPDecodeRGBAInto(
-            buffer.as_ptr(),
-            buffer.len(),
-            data.as_mut_ptr() as *mut u8,
-            (4 * width * height) as usize,
-            4 * width,
-        )
-    };
-    if ret.is_null() {
-        return Err("Failed to decode image data".to_string());
-    }
+        let mux = WebPMuxCreateInternal(&data, 0, WEBP_MUX_ABI_VERSION);
+        if mux.is_null() {
+            return Err("failed to create mux".to_string());
+        }
 
-    Ok(Image::from_rgba(data, width as usize, height as usize))
+        let mut image = MaybeUninit::uninit();
+        let ret = WebPMuxGetFrame(mux, 1, image.as_mut_ptr());
+        if ret != WebPMuxError::WEBP_MUX_OK {
+            return Err("failed to get frame 1".to_string());
+        }
+        let mut image = image.assume_init();
+
+        let mut width = 0;
+        let mut height = 0;
+        let rgba = WebPDecodeRGBA(
+            image.bitstream.bytes,
+            image.bitstream.size,
+            &mut width,
+            &mut height,
+        );
+        if rgba.is_null() {
+            return Err("failed to decode image data".to_string());
+        }
+
+        WebPDataClear(&mut image.bitstream);
+
+        let mut exif_chunk = MaybeUninit::uninit();
+        let ret = WebPMuxGetChunk(
+            mux,
+            b"EXIF" as *const _ as *const _,
+            exif_chunk.as_mut_ptr(),
+        );
+        let exif = match ret {
+            WebPMuxError::WEBP_MUX_OK => {
+                let exif_chunk = exif_chunk.assume_init();
+                let raw = std::slice::from_raw_parts(exif_chunk.bytes, exif_chunk.size);
+                exif::Reader::new().read_raw(raw.to_vec()).ok()
+            }
+            WebPMuxError::WEBP_MUX_NOT_FOUND => None,
+            error => return Err(format!("error while reading EXIF chunk: {:?}", error)),
+        };
+        let orientation = exif.and_then(exif_orientation).unwrap_or(1);
+
+        WebPMuxDelete(mux);
+
+        // XXX: Not safe because `buffer` is not allocated by `Vec`.
+        //      Probably fine because size is not changed :)
+        let buffer: Vec<RGBA8> = Vec::from_raw_parts(
+            rgba as *mut _,
+            (width * height) as usize,
+            (width * height) as usize,
+        );
+
+        Ok(orient_image(
+            Image::from_rgba(buffer, width as usize, height as usize),
+            orientation,
+        ))
+    }
 }
 
 fn compress_webp(image: &Image, quality: u8, _bg: RGB8) -> CompressResult {
@@ -366,7 +403,8 @@ fn compress_webp(image: &Image, quality: u8, _bg: RGB8) -> CompressResult {
             return Err("Failed to decode image data".to_string());
         }
 
-        // XXX: Not safe because `buffer` is not allocated by `Vec`
+        // XXX: Not safe because `buffer` is not allocated by `Vec`.
+        //      Probably fine because size is not changed :)
         let buffer = Vec::from_raw_parts(buffer, len as usize, len as usize);
 
         Ok((Image::from_rgba(pixels, image.width, image.height), buffer))

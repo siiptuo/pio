@@ -8,10 +8,10 @@ fi
 convert images/chicken.jpg \
   -crop 50x100+450+0% \
   +repage \
-  -resize 100x100 \
+  -resize 80x80 \
   -gravity south -font Z003-MediumItalic -pointsize 40 \
     -fill black  -annotate +1-8 π \
-    -fill orange -annotate +0-6  π \
+    -fill orange -annotate +0-6 π \
   -mattecolor orange \
   -frame 4x4+2+2 \
   tmp.png

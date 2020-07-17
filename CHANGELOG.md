@@ -17,10 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Output grayscale JPEGs when possible.
   These are smaller than color JPEGs.
 - Add background color if output format doesn't support transparency.
-  Set the background color using `--background-color` argument.
+  Set the background color using `--background-color` option.
 - Handle Exif orientation of input file.
   Rotate and flip the image data accordingly.
-- Add `--spread` argument to configure quality spread.
+- Add `--spread` option to configure quality spread.
   For example `--quality 80 --spread 10` will target JPEG quality of 80 with the minimum quality of 70 and maximum quality of 90.
 
 ### Changed
@@ -31,7 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
-- `--input-format` argument is not needed anymore because input format is automatically detected based on magic number.
+- `--input-format` option is not needed anymore because input format is automatically detected based on magic number.
 
 ### Fixed
 

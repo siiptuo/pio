@@ -17,15 +17,15 @@ It's designed primarily to optimize photographs for the web.
 
 - Optimize images automatically for the web
 - Supports PNG, JPEG and WebP
-- Easily installable statically linked binary (for Linux and macOS)
+- Easily installable statically-linked binary (for Linux and macOS)
 
 `pio` is still under development but should be usable for most images.
 It lacks some important features like proper color management support.
 
 ## Background
 
-Images are an important part of the web, but they usually use a lot of bandwidth (see HTTP Archive's [Page Weight](https://httparchive.org/reports/page-weight) for statistics).
-Optimizing images makes them smaller and thus faster to load.
+Images are an important part of the web and make up a large part of the typical website (see HTTP Archive's [Page Weight](https://httparchive.org/reports/page-weight) for statistics).
+Optimizing images can make websites faster to load and reduce the required bandwidth.
 
 How much should you optimize images?
 Many image editors and optimization tools only give you parameters such as quality or file size.
@@ -88,9 +88,9 @@ Basic usage:
 $ pio input.jpeg --output output.jpeg
 ```
 
-The target quality can be set using `--quality` argument:
+The target quality can be set using `--quality` option:
 
-```
+```sh
 $ pio input.jpeg --quality 95 --output output.jpeg
 ```
 
@@ -104,14 +104,14 @@ For the full list of available options, run `pio --help`.
 The input image should preferably be PNG or lossless WebP, or alternatively JPEG or lossy WebP stored with a high quality setting (95-100).
 `pio` will make already lossy compressed images look worse.
 
-For the web, you typically want to resize a high-resolution source image to a smaller image.
-For the best result, first resize the high-resolution image and store the resulting image with lossless compression.
+For the web, the first and most important optimization is resizing images close to the size they're displayed at.
+For the best result, first resize a high-resolution source image and store the resulting image with lossless compression.
 Only after this, optimize the resized image with `pio`.
 
 For example with the help of [ImageMagick](https://imagemagick.org/index.php) you could resize and optimize an image:
 
-```
-$ convert big.jpeg -resize 640x small.png
+```sh
+$ magick big.jpeg -resize 640x small.png
 $ pio small.png --output optimized.jpeg
 ```
 
@@ -120,17 +120,20 @@ You should do the resizing and optimization for each size independently.
 
 ### Quality setting explained
 
-`pio` uses an internal table to map target `--quality` setting to SSIM value. This table has been calculated by running a corpus of images through JPEG encoder and calculating the average SSIM value for each JPEG quality setting.
+`pio` uses an internal table to map target `--quality` setting to SSIM value.
+This table has been calculated by running a corpus of images through JPEG encoder and calculating the average SSIM value for each JPEG quality setting.
 
 This makes it possible to target the quality using a familiar 0-100 scale instead of a more obscure SSIM value.
 
-`pio` sets the minimum and maximum quality automatically based on the `--quality` argument. You can control the quality spread from the target using the `--spread` argument. For example the following command:
+`pio` sets the minimum and maximum quality automatically based on the `--quality` option.
+You can control the quality spread from the target using the `--spread` option. For example the following command:
 
-```
-pio input.jpeg --quality 80 --spread 10 --output output.jpeg
+```sh
+$ pio input.jpeg --quality 80 --spread 10 --output output.jpeg
 ```
 
-will target JPEG quality of 80 with the minimum quality of 70 and maximum quality of 90. The final quality setting will be selected by the SSIM calculation and it will depend on the complexity of the image.
+will target JPEG quality of 80 with the minimum quality of 70 and maximum quality of 90.
+The final quality setting will be selected by the SSIM calculation and it will depend on the complexity of the image.
 
 If you need, you can override this automatic calculation by specifying `--min` and/or `--max` values manually.
 

@@ -245,24 +245,24 @@ fn compress_png(image: &Image, quality: u8, _bg: RGB8) -> CompressResult {
         res.remapped(img).map_err(|err| err.to_string())?
     };
     let buffer = {
-        let mut state = lodepng::State::new();
+        let mut encoder = lodepng::Encoder::new();
         for color in &palette {
-            state
-                .info_raw
+            encoder
+                .info_raw_mut()
                 .palette_add(*color)
                 .map_err(|err| err.to_string())?;
-            state
-                .info_png
+            encoder
+                .info_png_mut()
                 .color
                 .palette_add(*color)
                 .map_err(|err| err.to_string())?;
         }
-        state.info_raw.colortype = lodepng::ColorType::PALETTE;
-        state.info_raw.set_bitdepth(8);
-        state.info_png.color.colortype = lodepng::ColorType::PALETTE;
-        state.info_png.color.set_bitdepth(8);
-        state.set_auto_convert(false);
-        state
+        encoder.info_raw_mut().colortype = lodepng::ColorType::PALETTE;
+        encoder.info_raw_mut().set_bitdepth(8);
+        encoder.info_png_mut().color.colortype = lodepng::ColorType::PALETTE;
+        encoder.info_png_mut().color.set_bitdepth(8);
+        encoder.set_auto_convert(false);
+        encoder
             .encode(&pixels, image.width, image.height)
             .map_err(|err| err.to_string())?
     };

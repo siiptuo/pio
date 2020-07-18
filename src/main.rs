@@ -229,8 +229,24 @@ fn compress_jpeg(image: &Image, quality: u8, bg: RGB8) -> CompressResult {
 }
 
 fn read_png(buffer: &[u8]) -> ReadResult {
-    let png = lodepng::decode32(buffer).map_err(|err| err.to_string())?;
-    Ok(Image::from_rgba(png.buffer, png.width, png.height))
+    let mut decoder = lodepng::Decoder::new();
+    decoder.remember_unknown_chunks(true);
+    decoder.info_raw_mut().colortype = lodepng::ColorType::RGBA;
+    let png = match decoder.decode(&buffer) {
+        Ok(lodepng::Image::RGBA(data)) => data,
+        Ok(_) => return Err("Color conversion failed".to_string()),
+        Err(err) => return Err(err.to_string()),
+    };
+    let orientation = decoder
+        .info_png()
+        .get("eXIf")
+        .and_then(|raw| exif::Reader::new().read_raw(raw.data().to_vec()).ok())
+        .and_then(exif_orientation)
+        .unwrap_or(1);
+    Ok(orient_image(
+        Image::from_rgba(png.buffer, png.width, png.height),
+        orientation,
+    ))
 }
 
 fn compress_png(image: &Image, quality: u8, _bg: RGB8) -> CompressResult {

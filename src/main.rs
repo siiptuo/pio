@@ -561,7 +561,7 @@ fn validate_spread(x: String) -> Result<(), String> {
 }
 
 fn parse_color(input: &str) -> Result<RGB8, String> {
-    if !input.starts_with("#") {
+    if !input.starts_with('#') {
         return Err("color must start #".to_string());
     }
     if input.len() != 7 {

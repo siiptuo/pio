@@ -5,90 +5,112 @@
 
 name: Rust
 
-on: [push]
+on: [push, pull_request]
 
 jobs:
   reuse:
-
-    runs-on: ubuntu-18.04
-
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
       - name: REUSE Compliance Check
         uses: fsfe/reuse-action@v1.1
 
-  build:
-
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-18.04, macos-10.15]
-
+  clippy:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
       - name: Install
-        run: sudo apt install musl-tools -y
-        if: runner.os == 'Linux'
-      - name: Add target (Linux)
-        run: rustup target add x86_64-unknown-linux-musl
-        if: runner.os == 'Linux'
-      - name: Add target (Mac)
-        run: rustup target add x86_64-apple-darwin
-        if: runner.os == 'macOS'
-      - name: Build
-        run: rustup component add clippy rustfmt
-      - name: Build (Linux-gnu)
-        run: cargo build --release --target=x86_64-unknown-linux-gnu
-        if: runner.os == 'Linux'
-      - name: Build (Linux-musl)
-        run: cargo build --release --target=x86_64-unknown-linux-musl
-        if: runner.os == 'Linux'
-      - name: Build (Mac)
-        run: cargo build --release --target=x86_64-apple-darwin
-        if: runner.os == 'macOS'
-      - name: Build
+        run: rustup component add clippy
+      - name: Run
         run: cargo clippy
-      - name: Build
+
+  rustfmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install
+        run: rustup component add rustfmt
+      - name: Run
         run: cargo fmt --all -- --check
-      - name: Upload (Mac)
+
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-16.04
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-16.04
+            target: x86_64-unknown-linux-musl
+          - os: macos-10.15
+            target: x86_64-apple-darwin
+    steps:
+      - uses: actions/checkout@v2
+      - name: Setup
+        run: sudo apt install musl-tools -y
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+      - name: Add target
+        run: rustup target add ${{ matrix.target }}
+      - name: Build
+        run: cargo build --release --target=${{ matrix.target }}
+      - name: Move
+        run: mv target/${{ matrix.target }}/release/pio pio-${{ matrix.target }}
+      - name: Upload
         uses: actions/upload-artifact@v1
-        if: runner.os == 'macOS'
         with:
-          name: pio-x86_64-apple-darwin
-          path: target/x86_64-apple-darwin/release/pio
-      - name: Upload (Linux-gnu)
-        uses: actions/upload-artifact@v1
-        if: runner.os == 'Linux'
+          name: pio-${{ matrix.target }}
+          path: pio-${{ matrix.target }}
+
+  create_release:
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+    steps:
+      - name: Get version from tag
+        id: tag_name
+        run: echo ::set-output name=current_version::${GITHUB_REF#refs/tags/}
+        shell: bash
+      - uses: actions/checkout@v2
+      - name: Get Changelog Entry
+        id: changelog_reader
+        uses: mindsers/changelog-reader-action@v1
         with:
-          name: pio-x86_64-unknown-linux-gnu
-          path: target/x86_64-unknown-linux-gnu/release/pio
-      - name: Upload (Linux-musl)
-        uses: actions/upload-artifact@v1
-        if: runner.os == 'Linux'
-        with:
-          name: pio-x86_64-unknown-linux-musl
-          path: target/x86_64-unknown-linux-musl/release/pio
-      - name: Move (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          mv target/x86_64-unknown-linux-gnu/release/pio pio-x86_64-unknown-linux-gnu
-          mv target/x86_64-unknown-linux-musl/release/pio pio-x86_64-unknown-linux-musl
-      - name: Move (Mac)
-        if: runner.os == 'macOS'
-        run: mv target/x86_64-apple-darwin/release/pio pio-x86_64-apple-darwin
-      - name: Release (Mac)
-        uses: softprops/action-gh-release@v1
-        if: startsWith(github.ref, 'refs/tags/') && runner.os == 'macOS'
-        with:
-          files: pio-x86_64-apple-darwin
+          version: ${{ steps.tag_name.outputs.current_version }}
+          path: CHANGELOG.md
+      - name: Create release
+        id: create_release
+        uses: actions/create-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: Release (Linux)
-        uses: softprops/action-gh-release@v1
-        if: startsWith(github.ref, 'refs/tags/') && runner.os == 'Linux'
         with:
-          files: |
-            pio-x86_64-unknown-linux-gnu
-            pio-x86_64-unknown-linux-musl
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref }}
+          body: ${{ steps.changelog_reader.outputs.log_entry }}
+          draft: false
+          prerelease: false
+
+  upload_release_assets:
+    needs: [create_release, build]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        artifact:
+          - pio-x86_64-unknown-linux-gnu
+          - pio-x86_64-unknown-linux-musl
+          - pio-x86_64-apple-darwin
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v2
+        id: download
+        with:
+          name: ${{ matrix.artifact }}
+      - name: Upload release asset
+        uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create_release.outputs.upload_url }}
+          asset_path: ${{ matrix.artifact }}
+          asset_name: ${{ matrix.artifact }}
+          asset_content_type: application/octet-stream

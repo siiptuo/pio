@@ -641,6 +641,15 @@ fn main() {
                 .default_value("#ffffff")
                 .validator(|x| parse_color(&x).map(|_| ())),
         )
+        .arg(
+            Arg::with_name("optimization-failed")
+                .long("optimization-failed")
+                .value_name("strategy")
+                .help("Sets strategy to use when output is larger than the input")
+                .takes_value(true)
+                .default_value("none")
+                .possible_values(&["none", "exit", "copy"]),
+        )
         .get_matches();
 
     let (output_format, mut output_writer): (Format, Box<dyn std::io::Write>) = match matches
@@ -719,6 +728,8 @@ fn main() {
 
     let bg = parse_color(matches.value_of("background-color").unwrap()).unwrap();
 
+    let fail_strategy = matches.value_of("optimization-failed").unwrap();
+
     let input_image = match match input_format {
         Format::JPEG => read_jpeg(&input_buffer),
         Format::PNG => read_png(&input_buffer),
@@ -747,13 +758,24 @@ fn main() {
         bg,
     ) {
         Ok(output_buffer) => {
-            if output_buffer.len() < original_size as usize {
+            if output_buffer.len() <= original_size as usize {
                 output_writer.write_all(&output_buffer).unwrap();
             } else {
-                eprintln!(
-                    "Failed to optimize the input image, copying the input image to output..."
-                );
-                output_writer.write_all(&input_buffer).unwrap();
+                match fail_strategy {
+                    "none" => {
+                        eprintln!("Warning: Output is larger than input but still writing output normally. This behavior can be changed with `--optimization-failed` option.");
+                        output_writer.write_all(&output_buffer).unwrap();
+                    }
+                    "exit" => {
+                        eprintln!("Error: Output would be larger than input, exiting now...");
+                        std::process::exit(1);
+                    }
+                    "copy" => {
+                        eprintln!("Warning: Output would be larger than input, copying input to output...");
+                        output_writer.write_all(&input_buffer).unwrap();
+                    }
+                    _ => unreachable!(),
+                }
             }
         }
         Err(err) => {

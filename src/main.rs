@@ -679,31 +679,34 @@ fn main() {
         }
     };
 
-    let input_buffer =
-        match matches
-            .value_of_os("INPUT")
-            .and_then(|s| if s == "-" { None } else { Some(s) })
-        {
-            None => {
-                let mut buffer = Vec::new();
-                std::io::stdin()
-                    .read_to_end(&mut buffer)
-                    .unwrap_or_else(|err| {
-                        eprintln!("failed to read standard input: {}", err);
-                        std::process::exit(1);
-                    });
-                buffer
-            }
-            Some(path) => std::fs::read(path).unwrap_or_else(|err| {
-                eprintln!("failed to read input file: {}", err);
-                std::process::exit(1);
-            }),
-        };
+    let mut input_reader: Box<dyn std::io::Read> = match matches
+        .value_of_os("INPUT")
+        .and_then(|s| if s == "-" { None } else { Some(s) })
+    {
+        None => Box::new(std::io::stdin()),
+        Some(path) => Box::new(File::open(path).unwrap_or_else(|err| {
+            eprintln!("failed to open input file: {}", err);
+            std::process::exit(1);
+        })),
+    };
 
+    // Read enough data to determine input file format by magic number.
+    let mut input_buffer = vec![0; 16];
+    input_reader.read(&mut input_buffer).unwrap_or_else(|err| {
+        eprintln!("failed to read input: {}", err);
+        std::process::exit(1);
+    });
     let input_format = Format::from_magic(&input_buffer).unwrap_or_else(|| {
         eprintln!("unknown input format, expected jpeg, png or webp");
         std::process::exit(1);
     });
+    // Read rest of the input.
+    input_reader
+        .read_to_end(&mut input_buffer)
+        .unwrap_or_else(|err| {
+            eprintln!("failed to read input: {}", err);
+            std::process::exit(1);
+        });
 
     let original_size = input_buffer.len();
 

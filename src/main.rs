@@ -692,10 +692,12 @@ fn main() {
 
     // Read enough data to determine input file format by magic number.
     let mut input_buffer = vec![0; 16];
-    input_reader.read(&mut input_buffer).unwrap_or_else(|err| {
-        eprintln!("failed to read input: {}", err);
-        std::process::exit(1);
-    });
+    input_reader
+        .read_exact(&mut input_buffer)
+        .unwrap_or_else(|err| {
+            eprintln!("failed to read magic number: {}", err);
+            std::process::exit(1);
+        });
     let input_format = Format::from_magic(&input_buffer).unwrap_or_else(|| {
         eprintln!("unknown input format, expected jpeg, png or webp");
         std::process::exit(1);

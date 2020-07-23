@@ -17,6 +17,7 @@ It's designed primarily to optimize photographs for the web.
 
 - Optimize images automatically for the web
 - Supports PNG, JPEG and WebP
+- Powered by great projects like [mozjpeg](https://github.com/mozilla/mozjpeg) and [pngquant](https://pngquant.org/)
 - Easily installable statically-linked binary (for Linux and macOS)
 
 `pio` is still under development but should be usable for most images.

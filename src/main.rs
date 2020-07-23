@@ -139,6 +139,8 @@ impl Image {
 
 type ReadResult = Result<Image, String>;
 type CompressResult = Result<(Image, Vec<u8>), String>;
+type LossyCompressor = Box<dyn Fn(&Image, u8) -> CompressResult>;
+type LosslessCompressor = Box<dyn Fn(&Image) -> CompressResult>;
 
 #[rustfmt::skip]
 const QUALITY_SSIM: [f64; 101] = [
@@ -359,7 +361,7 @@ fn read_webp(buffer: &[u8]) -> ReadResult {
     }
 }
 
-fn compress_webp(image: &Image, quality: u8) -> CompressResult {
+fn compress_webp(image: &Image, quality: u8, lossless: bool) -> CompressResult {
     unsafe {
         let mut config = MaybeUninit::<WebPConfig>::uninit();
         let ret = WebPConfigInitInternal(
@@ -374,6 +376,9 @@ fn compress_webp(image: &Image, quality: u8) -> CompressResult {
         let mut config = config.assume_init();
         config.method = 6;
         config.use_sharp_yuv = 1;
+        if lossless {
+            config.lossless = 1;
+        }
 
         let mut wrt = MaybeUninit::<WebPMemoryWriter>::uninit();
         WebPMemoryWriterInit(wrt.as_mut_ptr());
@@ -389,9 +394,9 @@ fn compress_webp(image: &Image, quality: u8) -> CompressResult {
         pic.height = image.height as i32;
         pic.writer = Some(WebPMemoryWrite);
         pic.custom_ptr = &mut wrt as *mut _ as *mut std::ffi::c_void;
-        // This is done in `cwebp` when `-sharp_yuv` option is used. Enabling `use_sharp_yuv`
-        // doesn't seem to do anything if `use_argb` is not used.
-        if config.use_sharp_yuv == 1 {
+        // This behavior is copied from `cwebp`. For example `use_sharp_yuv` doesn't seem to do
+        // anything if `use_argb` is not enabled.
+        if config.lossless == 1 || config.use_sharp_yuv == 1 || config.preprocessing > 0 {
             pic.use_argb = 1;
         }
 
@@ -481,7 +486,8 @@ impl Format {
 
 fn compress_image(
     image: Image,
-    compressor: impl Fn(&Image, u8) -> CompressResult,
+    lossy_compress: LossyCompressor,
+    lossless_compress: Option<LosslessCompressor>,
     target: f64,
     min_quality: u8,
     max_quality: u8,
@@ -499,7 +505,7 @@ fn compress_image(
 
     loop {
         let quality = (min + max) / 2;
-        let (a, b) = compressor(&image, quality)?;
+        let (a, b) = lossy_compress(&image, quality)?;
         compressed = a;
         buffer = b;
 
@@ -541,6 +547,20 @@ fn compress_image(
 
         if min > max {
             break;
+        }
+    }
+
+    // Try lossless compression if the format supports it. For example, lossless WebP can sometimes
+    // be smaller than lossy WebP for non-photographic images.
+    if let Some(compress) = lossless_compress {
+        eprint!("|                        |");
+        let (_, b) = compress(&image)?;
+        eprintln!(
+            "    lossless  0.000000 SSIM  {:>3} % of original",
+            100 * b.len() as u64 / original_size
+        );
+        if b.len() < buffer.len() {
+            return Ok(b);
         }
     }
 
@@ -765,11 +785,15 @@ fn main() {
         }
     };
 
-    let compressor = match output_format {
-        Format::JPEG => compress_jpeg,
-        Format::PNG => compress_png,
-        Format::WEBP => compress_webp,
-    };
+    let (lossy_compress, lossless_compress): (LossyCompressor, Option<LosslessCompressor>) =
+        match output_format {
+            Format::JPEG => (Box::new(compress_jpeg), None),
+            Format::PNG => (Box::new(compress_png), None),
+            Format::WEBP => (
+                Box::new(|img, q| compress_webp(img, q, false)),
+                Some(Box::new(|img| compress_webp(img, 100, true))),
+            ),
+        };
 
     if !output_format.supports_transparency() || matches.is_present("no-transparency") {
         let bg = parse_color(matches.value_of("background-color").unwrap()).unwrap();
@@ -778,7 +802,8 @@ fn main() {
 
     match compress_image(
         input_image,
-        compressor,
+        lossy_compress,
+        lossless_compress,
         target,
         min,
         max,

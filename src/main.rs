@@ -503,8 +503,13 @@ fn compress_image(
     let mut compressed;
     let mut buffer;
 
+    // Compress image with different qualities and find which is closest to the SSIM target. Binary
+    // search is used to speed up the search. Since there are 101 possible quality values, only
+    // ceil(log2(101)) = 7 comparisons are needed at maximum.
     loop {
+        // Overflow is not possible because `min` and `max` are in range 0-100.
         let quality = (min + max) / 2;
+
         let (a, b) = lossy_compress(&image, quality)?;
         compressed = a;
         buffer = b;
@@ -542,6 +547,10 @@ fn compress_image(
         if dssim > target {
             min = quality + 1;
         } else {
+            // Prevent underflow because comparison is unreliable at low qualities.
+            if quality == 0 {
+                break;
+            }
             max = quality - 1;
         }
 

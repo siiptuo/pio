@@ -208,23 +208,83 @@ fn exif_orientation(exif: exif::Exif) -> Option<u32> {
         .filter(|x| *x >= 1 && *x <= 8)
 }
 
+// ICC profiles can be split into chunks and stored in multiple markers. Reconstruct the profile by
+// reading these markers and concatenating their data.
+fn jpeg_icc(dinfo: &mozjpeg::Decompress) -> Result<Option<Vec<u8>>, &'static str> {
+    let mut markers = dinfo.markers();
+    let first_chunk = markers.find_map(|marker| match marker.data {
+        [b'I', b'C', b'C', b'_', b'P', b'R', b'O', b'F', b'I', b'L', b'E', b'\0', 1, total, data @ ..] => Some((*total, data.to_vec())),
+        _ => None
+    });
+    if let Some((total_chunks, mut buffer)) = first_chunk {
+        let mut chunks_read = 1;
+        for marker in markers {
+            if chunks_read == total_chunks {
+                break;
+            }
+            if let [b'I', b'C', b'C', b'_', b'P', b'R', b'O', b'F', b'I', b'L', b'E', b'\0', index, total, data @ ..] =
+                marker.data
+            {
+                if *index != chunks_read - 1 {
+                    return Err("Failed to read ICC profile: invalid index");
+                }
+                if *total != total_chunks {
+                    return Err("Failed to read ICC profile: different totals in two chunks");
+                }
+                buffer.extend_from_slice(data);
+                chunks_read += 1;
+            }
+        }
+        if chunks_read == total_chunks {
+            Ok(Some(buffer))
+        } else {
+            Err("Failed to read ICC profile: missing chunks")
+        }
+    } else {
+        Ok(None)
+    }
+}
+
 fn read_jpeg(buffer: &[u8]) -> ReadResult {
     let dinfo = mozjpeg::Decompress::with_markers(&[mozjpeg::Marker::APP(2)])
         .from_mem(buffer)
         .map_err(|err| err.to_string())?;
 
-    let icc = dinfo
-        .markers()
-        .find(|marker| marker.data.starts_with(b"ICC_PROFILE\0"));
-    eprintln!("jpeg icc: {}", icc.is_some());
+    let profile = match jpeg_icc(&dinfo) {
+        Ok(Some(icc)) => match lcms2::Profile::new_icc(&icc) {
+            Ok(x) => Some(x),
+            Err(err) => {
+                eprintln!("Failed to read ICC profile: {}", err);
+                None
+            }
+        },
+        Ok(None) => None,
+        Err(err) => {
+            eprintln!("Failed to read ICC profile: {}", err);
+            None
+        }
+    };
 
     let mut rgb = dinfo.rgb().map_err(|err| err.to_string())?;
     let width = rgb.width();
     let height = rgb.height();
-    let data: Vec<RGB8> = rgb
+    let mut data: Vec<RGB8> = rgb
         .read_scanlines()
         .ok_or_else(|| "Failed decode image data".to_string())?;
     rgb.finish_decompress();
+
+    if let Some(profile) = profile {
+        eprintln!("transforming to srgb...");
+        let transform = lcms2::Transform::new(
+            &profile,
+            lcms2::PixelFormat::RGB_8,
+            &lcms2::Profile::new_srgb(),
+            lcms2::PixelFormat::RGB_8,
+            lcms2::Intent::Perceptual,
+        )
+        .map_err(|err| err.to_string())?;
+        transform.transform_in_place(&mut data);
+    }
 
     let orientation = exif::Reader::new()
         .read_from_container(&mut std::io::Cursor::new(buffer))

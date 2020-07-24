@@ -41,6 +41,23 @@ fn is_gray(color: RGB8) -> bool {
     distance(color.r, color.g) <= 1 && distance(color.g, color.b) <= 1
 }
 
+fn srgb_to_linear(u: u8) -> f32 {
+    let u = u as f32 / 255.0;
+    if u <= 0.04045 {
+        u / 12.92
+    } else {
+        ((u + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+fn linear_to_srgb(u: f32) -> u8 {
+    if u <= 0.0031308 {
+        (255.0 * (12.92 * u)).round() as u8
+    } else {
+        (255.0 * (1.055 * u.powf(1.0 / 2.4) - 0.055)).round() as u8
+    }
+}
+
 impl Image {
     fn from_rgba(data: Vec<RGBA8>, width: usize, height: usize) -> Self {
         let has_color = data.iter().any(|c| !is_gray(c.rgb()));
@@ -75,23 +92,19 @@ impl Image {
     }
 
     fn alpha_blend(&mut self, bg: RGB8) {
-        let gamma = 2.2;
-        let to_f32 = |x| x as f32 / 255.0;
-        let to_u8 = |x| (255.0 * x) as u8;
-
-        let r1 = to_f32(bg.r);
-        let g1 = to_f32(bg.g);
-        let b1 = to_f32(bg.b);
-
+        use rgb::ComponentMap;
+        let bg = bg.map(srgb_to_linear);
         for pixel in self.data.iter_mut() {
-            let r2 = to_f32(pixel.r);
-            let g2 = to_f32(pixel.g);
-            let b2 = to_f32(pixel.b);
-            let a = to_f32(pixel.a);
-            pixel.r = to_u8((r2.powf(gamma) * a + r1.powf(gamma) * (1.0 - a)).powf(1.0 / gamma));
-            pixel.g = to_u8((g2.powf(gamma) * a + g1.powf(gamma) * (1.0 - a)).powf(1.0 / gamma));
-            pixel.b = to_u8((b2.powf(gamma) * a + b1.powf(gamma) * (1.0 - a)).powf(1.0 / gamma));
-            pixel.a = 255;
+            let a = pixel.a as f32 / 255.0;
+            *pixel = pixel
+                .rgb()
+                .iter()
+                .map(srgb_to_linear)
+                .zip(bg.iter())
+                .map(|(fg, bg)| fg * a + bg * (1.0 - a))
+                .map(linear_to_srgb)
+                .collect::<RGB8>()
+                .alpha(255);
         }
     }
 

@@ -24,3 +24,4 @@ libwebp-sys = "0.3.0"
 clap = "2.33.1"
 image = { version = "0.23.6", default-features = false }
 kamadak-exif = "0.5.1"
+rayon = "1.3.1"

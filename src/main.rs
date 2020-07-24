@@ -92,9 +92,11 @@ impl Image {
     }
 
     fn alpha_blend(&mut self, bg: RGB8) {
+        use rayon::prelude::*;
         use rgb::ComponentMap;
+
         let bg = bg.map(srgb_to_linear);
-        for pixel in self.data.iter_mut() {
+        self.data.par_iter_mut().for_each(|pixel| {
             let a = pixel.a as f32 / 255.0;
             *pixel = pixel
                 .rgb()
@@ -105,7 +107,7 @@ impl Image {
                 .map(linear_to_srgb)
                 .collect::<RGB8>()
                 .alpha(255);
-        }
+        });
     }
 
     fn to_rgb(&self) -> ImgVec<RGB8> {

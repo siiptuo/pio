@@ -210,7 +210,7 @@ fn exif_orientation(exif: exif::Exif) -> Option<u32> {
 
 // ICC profiles can be split into chunks and stored in multiple markers. Reconstruct the profile by
 // reading these markers and concatenating their data.
-fn jpeg_icc(dinfo: &mozjpeg::Decompress) -> Result<Option<Vec<u8>>, &'static str> {
+fn jpeg_icc(dinfo: &mozjpeg::Decompress) -> Result<Option<Vec<u8>>, String> {
     let mut markers = dinfo.markers();
     let first_chunk = markers.find_map(|marker| match marker.data {
         [b'I', b'C', b'C', b'_', b'P', b'R', b'O', b'F', b'I', b'L', b'E', b'\0', 1, total, data @ ..] => Some((*total, data.to_vec())),
@@ -225,20 +225,27 @@ fn jpeg_icc(dinfo: &mozjpeg::Decompress) -> Result<Option<Vec<u8>>, &'static str
             if let [b'I', b'C', b'C', b'_', b'P', b'R', b'O', b'F', b'I', b'L', b'E', b'\0', index, total, data @ ..] =
                 marker.data
             {
-                if *index != chunks_read - 1 {
-                    return Err("Failed to read ICC profile: invalid index");
+                chunks_read += 1;
+                if *index != chunks_read {
+                    return Err(format!(
+                        "Failed to read ICC profile: invalid index (expected {} found {})",
+                        chunks_read, index
+                    ));
                 }
                 if *total != total_chunks {
-                    return Err("Failed to read ICC profile: different totals in two chunks");
+                    return Err(format!("Failed to read ICC profile: different totals in two chunks (expected {} found {})", total_chunks, total));
                 }
                 buffer.extend_from_slice(data);
-                chunks_read += 1;
             }
         }
         if chunks_read == total_chunks {
             Ok(Some(buffer))
         } else {
-            Err("Failed to read ICC profile: missing chunks")
+            Err(format!(
+                "Failed to read ICC profile: {} chunks missing out of {} chunks",
+                total_chunks - chunks_read,
+                total_chunks
+            ))
         }
     } else {
         Ok(None)

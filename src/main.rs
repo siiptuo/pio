@@ -333,7 +333,7 @@ fn read_png(buffer: &[u8]) -> ReadResult {
     decoder.remember_unknown_chunks(true);
     decoder.info_raw_mut().colortype = lodepng::ColorType::RGBA;
 
-    let png = match decoder.decode(&buffer) {
+    let mut png = match decoder.decode(&buffer) {
         Ok(lodepng::Image::RGBA(data)) => data,
         Ok(_) => return Err("Color conversion failed".to_string()),
         Err(err) => return Err(err.to_string()),
@@ -346,8 +346,25 @@ fn read_png(buffer: &[u8]) -> ReadResult {
         .and_then(exif_orientation)
         .unwrap_or(1);
 
-    let icc = decoder.get_icc().ok();
-    eprintln!("png icc: {}", icc.is_some());
+    if let Ok(icc) = decoder.get_icc() {
+        eprintln!("transforming to srgb...");
+        match lcms2::Profile::new_icc(&icc) {
+            Ok(profile) => {
+                let transform = lcms2::Transform::new(
+                    &profile,
+                    lcms2::PixelFormat::RGBA_8,
+                    &lcms2::Profile::new_srgb(),
+                    lcms2::PixelFormat::RGBA_8,
+                    lcms2::Intent::Perceptual,
+                )
+                .map_err(|err| err.to_string())?;
+                transform.transform_in_place(&mut png.buffer);
+            }
+            Err(err) => {
+                eprintln!("Failed to read ICC profile: {}", err);
+            }
+        }
+    }
 
     Ok(orient_image(
         Image::from_rgba(png.buffer, png.width, png.height),

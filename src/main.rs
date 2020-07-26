@@ -110,14 +110,6 @@ impl Image {
         });
     }
 
-    fn to_rgb(&self) -> ImgVec<RGB8> {
-        Img::new(
-            self.data.iter().map(|c| c.rgb()).collect(),
-            self.width,
-            self.height,
-        )
-    }
-
     fn as_bytes(&self) -> &[u8] {
         self.data.as_bytes()
     }
@@ -308,7 +300,7 @@ fn read_jpeg(buffer: &[u8]) -> ReadResult {
 fn compress_jpeg(image: &Image, quality: u8) -> CompressResult {
     let mut cinfo = mozjpeg::Compress::new(match image.color_space {
         ColorSpace::Gray => mozjpeg::ColorSpace::JCS_GRAYSCALE,
-        _ => mozjpeg::ColorSpace::JCS_RGB,
+        _ => mozjpeg::ColorSpace::JCS_EXT_RGBX,
     });
     cinfo.set_size(image.width, image.height);
     cinfo.set_quality(quality as f32);
@@ -316,7 +308,7 @@ fn compress_jpeg(image: &Image, quality: u8) -> CompressResult {
     cinfo.start_compress();
     if !match image.color_space {
         ColorSpace::Gray => cinfo.write_scanlines(image.to_gray().buf().as_bytes()),
-        _ => cinfo.write_scanlines(image.to_rgb().buf().as_bytes()),
+        _ => cinfo.write_scanlines(image.as_bytes()),
     } {
         return Err("Failed to compress image data".to_string());
     }

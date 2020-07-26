@@ -79,6 +79,15 @@ impl Image {
         Self::from_rgba(data.iter().map(|c| c.alpha(255)).collect(), width, height)
     }
 
+    fn from_gray(data: Vec<GRAY8>, width: usize, height: usize) -> Self {
+        Self {
+            width,
+            height,
+            data: data.iter().map(|c| RGB8::from(*c).alpha(255)).collect(),
+            color_space: ColorSpace::Gray,
+        }
+    }
+
     fn to_rgbaplu(&self) -> ImgVec<RGBAPLU> {
         Img::new(self.data.to_rgbaplu(), self.width, self.height)
     }
@@ -264,26 +273,78 @@ fn read_jpeg(buffer: &[u8]) -> ReadResult {
         }
     };
 
-    let mut rgb = dinfo.rgb().map_err(|err| err.to_string())?;
-    let width = rgb.width();
-    let height = rgb.height();
-    let mut data: Vec<RGB8> = rgb
-        .read_scanlines()
-        .ok_or_else(|| "Failed decode image data".to_string())?;
-    rgb.finish_decompress();
+    let (width, height) = dinfo.size();
 
-    if let Some(profile) = profile {
-        eprintln!("transforming to srgb...");
-        let transform = lcms2::Transform::new(
-            &profile,
-            lcms2::PixelFormat::RGB_8,
-            &lcms2::Profile::new_srgb(),
-            lcms2::PixelFormat::RGB_8,
-            lcms2::Intent::Perceptual,
-        )
-        .map_err(|err| err.to_string())?;
-        transform.transform_in_place(&mut data);
-    }
+    let image = match dinfo.image() {
+        Ok(mozjpeg::decompress::Format::RGB(mut decompress)) => {
+            let mut data: Vec<RGB8> = decompress
+                .read_scanlines()
+                .ok_or_else(|| "Failed decode image data".to_string())?;
+            decompress.finish_decompress();
+
+            if let Some(profile) = profile {
+                eprintln!("Transforming RGB to sRGB...");
+                let transform = lcms2::Transform::new(
+                    &profile,
+                    lcms2::PixelFormat::RGB_8,
+                    &lcms2::Profile::new_srgb(),
+                    lcms2::PixelFormat::RGB_8,
+                    lcms2::Intent::Perceptual,
+                )
+                .map_err(|err| err.to_string())?;
+                transform.transform_in_place(&mut data);
+            }
+
+            Ok(Image::from_rgb(data, width, height))
+        }
+        Ok(mozjpeg::decompress::Format::Gray(mut decompress)) => {
+            let mut data: Vec<GRAY8> = decompress
+                .read_scanlines()
+                .ok_or_else(|| "Failed decode image data".to_string())?;
+            decompress.finish_decompress();
+
+            if let Some(profile) = profile {
+                eprintln!("Transforming Gray to sRGB...");
+                let transform = lcms2::Transform::new(
+                    &profile,
+                    lcms2::PixelFormat::GRAY_8,
+                    &lcms2::Profile::new_srgb(),
+                    lcms2::PixelFormat::GRAY_8,
+                    lcms2::Intent::Perceptual,
+                )
+                .map_err(|err| err.to_string())?;
+                transform.transform_in_place(&mut data);
+            }
+
+            Ok(Image::from_gray(data, width, height))
+        }
+        Ok(mozjpeg::decompress::Format::CMYK(mut decompress)) => {
+            let profile = profile
+                .ok_or_else(|| "Expected ICC profile for JPEG in CMYK color space".to_string())?;
+
+            let data: Vec<[u8; 4]> = decompress
+                .read_scanlines()
+                .ok_or_else(|| "Failed decode image data".to_string())?;
+            decompress.finish_decompress();
+
+            eprintln!("Transforming CMYK to sRGB...");
+            let transform = lcms2::Transform::new(
+                &profile,
+                lcms2::PixelFormat::CMYK_8,
+                &lcms2::Profile::new_srgb(),
+                lcms2::PixelFormat::RGB_8,
+                lcms2::Intent::Perceptual,
+            )
+            .map_err(|err| err.to_string())?;
+
+            let mut output = vec![RGB8::new(0, 0, 0); data.len()];
+
+            transform.transform_pixels(&data, &mut output);
+
+            Ok(Image::from_rgb(output, width, height))
+        }
+        Err(err) => Err(format!("Failed decode image data: {}", err)),
+    }?;
 
     let orientation = exif::Reader::new()
         .read_from_container(&mut std::io::Cursor::new(buffer))
@@ -291,10 +352,7 @@ fn read_jpeg(buffer: &[u8]) -> ReadResult {
         .and_then(exif_orientation)
         .unwrap_or(1);
 
-    Ok(orient_image(
-        Image::from_rgb(data, width, height),
-        orientation,
-    ))
+    Ok(orient_image(image, orientation))
 }
 
 fn compress_jpeg(image: &Image, quality: u8) -> CompressResult {

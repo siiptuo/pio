@@ -440,6 +440,14 @@ fn read_webp(buffer: &[u8]) -> ReadResult {
             return Err("failed to decode image data".to_string());
         }
 
+        // XXX: Not safe because `buffer` is not allocated by `Vec`.
+        //      Probably fine because size is not changed :)
+        let mut buffer: Vec<RGBA8> = Vec::from_raw_parts(
+            rgba as *mut _,
+            (width * height) as usize,
+            (width * height) as usize,
+        );
+
         WebPDataClear(&mut image.bitstream);
 
         let mut exif_chunk = MaybeUninit::uninit();
@@ -469,17 +477,27 @@ fn read_webp(buffer: &[u8]) -> ReadResult {
             WebPMuxError::WEBP_MUX_NOT_FOUND => None,
             error => return Err(format!("{:?}", error)),
         };
-        eprintln!("webp icc: {}", icc_data.is_some());
+        if let Some(icc) = icc_data {
+            eprintln!("transforming to srgb...");
+            match lcms2::Profile::new_icc(&icc) {
+                Ok(profile) => {
+                    let transform = lcms2::Transform::new(
+                        &profile,
+                        lcms2::PixelFormat::RGBA_8,
+                        &lcms2::Profile::new_srgb(),
+                        lcms2::PixelFormat::RGBA_8,
+                        lcms2::Intent::Perceptual,
+                    )
+                    .map_err(|err| err.to_string())?;
+                    transform.transform_in_place(&mut buffer);
+                }
+                Err(err) => {
+                    eprintln!("Failed to read ICC profile: {}", err);
+                }
+            }
+        }
 
         WebPMuxDelete(mux);
-
-        // XXX: Not safe because `buffer` is not allocated by `Vec`.
-        //      Probably fine because size is not changed :)
-        let buffer: Vec<RGBA8> = Vec::from_raw_parts(
-            rgba as *mut _,
-            (width * height) as usize,
-            (width * height) as usize,
-        );
 
         Ok(orient_image(
             Image::from_rgba(buffer, width as usize, height as usize),

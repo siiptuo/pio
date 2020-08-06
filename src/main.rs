@@ -860,3 +860,107 @@ fn main() {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use assert_cmd::Command;
+    use tempfile::tempdir;
+
+    fn convert_image(
+        input: impl AsRef<Path>,
+        output: impl AsRef<Path>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new("convert")
+            .arg(input.as_ref())
+            .arg("-quality")
+            .arg("100")
+            .arg(output.as_ref())
+            .output()?;
+        assert!(output.status.success());
+        Ok(())
+    }
+
+    fn assert_image_similarity(
+        image1: impl AsRef<Path>,
+        image2: impl AsRef<Path>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new("compare")
+            .arg("-metric")
+            .arg("PSNR")
+            .arg(image1.as_ref())
+            .arg(image2.as_ref())
+            .arg("/dev/null")
+            .output()?;
+        let psnr: f32 = String::from_utf8(output.stderr)?.parse()?;
+        assert!(psnr > 30.0);
+        Ok(())
+    }
+
+    #[test]
+    fn fails_with_no_arguments() -> Result<(), Box<dyn std::error::Error>> {
+        let mut cmd = Command::cargo_bin("pio")?;
+        cmd.assert().failure().stderr(
+            "use `--output` to write to a file or `--output-format` to write to standard output\n",
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn reads_jpeg() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempdir()?;
+        let input = dir.path().join("input.jpeg");
+        convert_image("images/image1-original.png", &input)?;
+        let output = dir.path().join("output.jpeg");
+        let mut cmd = Command::cargo_bin("pio")?;
+        cmd.arg(&input).arg("-o").arg(&output).assert().success();
+        assert_image_similarity(input, output)?;
+        Ok(())
+    }
+
+    #[test]
+    fn outputs_jpeg() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempdir()?;
+        let input = "images/image1-original.png";
+        let output = dir.path().join("output.jpeg");
+        let mut cmd = Command::cargo_bin("pio")?;
+        cmd.arg(input).arg("-o").arg(&output).assert().success();
+        assert_image_similarity(input, output)?;
+        Ok(())
+    }
+
+    #[test]
+    fn reads_webp() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempdir()?;
+        let input = dir.path().join("input.webp");
+        convert_image("images/image1-original.png", &input)?;
+        let output = dir.path().join("output.jpeg");
+        let mut cmd = Command::cargo_bin("pio")?;
+        cmd.arg(&input).arg("-o").arg(&output).assert().success();
+        assert_image_similarity(input, output)?;
+        Ok(())
+    }
+
+    #[test]
+    fn outputs_webp() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempdir()?;
+        let input = "images/image1-original.png";
+        let output = dir.path().join("output.webp");
+        let mut cmd = Command::cargo_bin("pio")?;
+        cmd.arg(input).arg("-o").arg(&output).assert().success();
+        assert_image_similarity(input, output)?;
+        Ok(())
+    }
+
+    #[test]
+    fn outputs_png() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempdir()?;
+        let input = "images/image1-original.png";
+        let output = dir.path().join("output.png");
+        let mut cmd = Command::cargo_bin("pio")?;
+        cmd.arg(input).arg("-o").arg(&output).assert().success();
+        assert_image_similarity(input, output)?;
+        Ok(())
+    }
+}

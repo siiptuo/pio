@@ -228,7 +228,11 @@ fn read_jpeg(buffer: &[u8]) -> ReadResult {
     ))
 }
 
-fn compress_jpeg(image: &Image, quality: u8, chroma_subsampling: ChromaSubsampling) -> CompressResult {
+fn compress_jpeg(
+    image: &Image,
+    quality: u8,
+    chroma_subsampling: ChromaSubsampling,
+) -> CompressResult {
     let mut cinfo = mozjpeg::Compress::new(match image.color_space {
         ColorSpace::Gray => mozjpeg::ColorSpace::JCS_GRAYSCALE,
         _ => mozjpeg::ColorSpace::JCS_RGB,
@@ -238,12 +242,16 @@ fn compress_jpeg(image: &Image, quality: u8, chroma_subsampling: ChromaSubsampli
     cinfo.set_mem_dest();
 
     let chroma_subsampling = match chroma_subsampling {
-        ChromaSubsampling::_444 => [[1,1],[1,1],[1,1]],
-        ChromaSubsampling::_422 => [[2,2],[2,1],[2,1]],
-        ChromaSubsampling::_420 => [[2,2],[1,1],[1,1]],
+        ChromaSubsampling::_444 => [[1, 1], [1, 1], [1, 1]],
+        ChromaSubsampling::_422 => [[2, 2], [2, 1], [2, 1]],
+        ChromaSubsampling::_420 => [[2, 2], [1, 1], [1, 1]],
     };
 
-    for (c, samp) in cinfo.components_mut().iter_mut().zip(chroma_subsampling.iter()) {
+    for (c, samp) in cinfo
+        .components_mut()
+        .iter_mut()
+        .zip(chroma_subsampling.iter())
+    {
         c.v_samp_factor = samp[0];
         c.h_samp_factor = samp[1];
     }
@@ -846,7 +854,10 @@ fn main() {
 
     let (lossy_compress, lossless_compress): (LossyCompressor, Option<LosslessCompressor>) =
         match output_format {
-            Format::JPEG => (Box::new(move |img, q| compress_jpeg(img, q, chroma_subsampling)), None),
+            Format::JPEG => (
+                Box::new(move |img, q| compress_jpeg(img, q, chroma_subsampling)),
+                None,
+            ),
             Format::PNG => (Box::new(compress_png), None),
             Format::WEBP => (
                 Box::new(|img, q| compress_webp(img, q, false)),

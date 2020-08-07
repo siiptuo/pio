@@ -228,7 +228,11 @@ fn read_jpeg(buffer: &[u8]) -> ReadResult {
     ))
 }
 
-fn compress_jpeg(image: &Image, quality: u8) -> CompressResult {
+fn compress_jpeg(
+    image: &Image,
+    quality: u8,
+    chroma_subsampling: ChromaSubsampling,
+) -> CompressResult {
     let mut cinfo = mozjpeg::Compress::new(match image.color_space {
         ColorSpace::Gray => mozjpeg::ColorSpace::JCS_GRAYSCALE,
         _ => mozjpeg::ColorSpace::JCS_RGB,
@@ -236,6 +240,22 @@ fn compress_jpeg(image: &Image, quality: u8) -> CompressResult {
     cinfo.set_size(image.width, image.height);
     cinfo.set_quality(quality as f32);
     cinfo.set_mem_dest();
+
+    let chroma_subsampling = match chroma_subsampling {
+        ChromaSubsampling::_444 => [[1, 1], [1, 1], [1, 1]],
+        ChromaSubsampling::_422 => [[2, 2], [2, 1], [2, 1]],
+        ChromaSubsampling::_420 => [[2, 2], [1, 1], [1, 1]],
+    };
+
+    for (c, samp) in cinfo
+        .components_mut()
+        .iter_mut()
+        .zip(chroma_subsampling.iter())
+    {
+        c.v_samp_factor = samp[0];
+        c.h_samp_factor = samp[1];
+    }
+
     cinfo.start_compress();
     if !match image.color_space {
         ColorSpace::Gray => cinfo.write_scanlines(image.to_gray().buf().as_bytes()),
@@ -499,6 +519,13 @@ impl Format {
     }
 }
 
+#[derive(Copy, Clone)]
+enum ChromaSubsampling {
+    _420,
+    _422,
+    _444,
+}
+
 fn compress_image(
     image: Image,
     lossy_compress: LossyCompressor,
@@ -714,6 +741,15 @@ fn main() {
                 .default_value("none")
                 .possible_values(&["none", "exit", "copy"]),
         )
+        .arg(
+            Arg::with_name("chroma-subsampling")
+                .long("chroma-subsampling")
+                .value_name("xxx")
+                .help("Specifies chroma subsampling")
+                .takes_value(true)
+                .default_value("420")
+                .possible_values(&["444", "422", "420"]),
+        )
         .get_matches();
 
     let (output_format, mut output_writer): (Format, Box<dyn std::io::Write>) = match matches
@@ -797,6 +833,13 @@ fn main() {
 
     let fail_strategy = matches.value_of("optimization-failed").unwrap();
 
+    let chroma_subsampling = match matches.value_of("chroma-subsampling").unwrap() {
+        "420" => ChromaSubsampling::_420,
+        "422" => ChromaSubsampling::_422,
+        "444" => ChromaSubsampling::_444,
+        _ => unreachable!(),
+    };
+
     let mut input_image = match match input_format {
         Format::JPEG => read_jpeg(&input_buffer),
         Format::PNG => read_png(&input_buffer),
@@ -811,7 +854,10 @@ fn main() {
 
     let (lossy_compress, lossless_compress): (LossyCompressor, Option<LosslessCompressor>) =
         match output_format {
-            Format::JPEG => (Box::new(compress_jpeg), None),
+            Format::JPEG => (
+                Box::new(move |img, q| compress_jpeg(img, q, chroma_subsampling)),
+                None,
+            ),
             Format::PNG => (Box::new(compress_png), None),
             Format::WEBP => (
                 Box::new(|img, q| compress_webp(img, q, false)),

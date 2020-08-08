@@ -660,6 +660,202 @@ fn parse_color(input: &str) -> Result<RGB8, String> {
     ))
 }
 
+enum Output {
+    Stdout(std::io::Stdout),
+    File {
+        path: std::path::PathBuf,
+        file: std::fs::File,
+        empty: bool,
+    },
+}
+
+impl Output {
+    fn file(path: impl AsRef<Path>) -> std::io::Result<Self> {
+        let path = path.as_ref();
+        File::create(path).map(|file| Self::File {
+            path: path.to_path_buf(),
+            file,
+            empty: true,
+        })
+    }
+
+    fn stdout() -> Self {
+        Self::Stdout(std::io::stdout())
+    }
+
+    fn write(mut self, buf: &[u8]) -> std::io::Result<()> {
+        use std::io::Write;
+        match self {
+            Output::Stdout(ref mut stdout) => {
+                stdout.write_all(buf)?;
+            }
+            Output::File {
+                ref mut file,
+                ref mut empty,
+                ..
+            } => {
+                file.write_all(buf)?;
+                file.sync_all()?;
+                *empty = false;
+            }
+        };
+        Ok(())
+    }
+}
+
+impl Drop for Output {
+    fn drop(&mut self) {
+        match self {
+            Output::File {
+                path,
+                file,
+                empty: true,
+            } => {
+                drop(file);
+                std::fs::remove_file(path).unwrap_or_else(|_err| {})
+            }
+            _ => {}
+        }
+    }
+}
+
+fn pio(matches: clap::ArgMatches) -> Result<(), String> {
+    let quality = matches.value_of("quality").unwrap().parse::<u8>().unwrap();
+
+    let spread = matches.value_of("spread").unwrap().parse::<u8>().unwrap();
+
+    let target = QUALITY_SSIM[quality as usize];
+
+    let min = match matches.value_of("min") {
+        Some(s) => s.parse().unwrap(),
+        None => std::cmp::max(0, quality - std::cmp::min(quality, spread)),
+    };
+    let max = match matches.value_of("max") {
+        Some(s) => s.parse().unwrap(),
+        None => std::cmp::min(quality + spread, 100),
+    };
+    if min > max {
+        return Err("min must be smaller or equal to max".to_string());
+    }
+
+    let fail_strategy = matches.value_of("optimization-failed").unwrap();
+
+    let chroma_subsampling = match matches.value_of("chroma-subsampling").unwrap() {
+        "420" => ChromaSubsampling::_420,
+        "422" => ChromaSubsampling::_422,
+        "444" => ChromaSubsampling::_444,
+        _ => unreachable!(),
+    };
+
+    let (output_format, output_writer): (Format, Output) = match matches.value_of_os("output") {
+        Some(path) => {
+            let format = match matches.value_of("output-format") {
+                Some(format) => Format::from_ext(format).unwrap(),
+                None => Format::from_path(path).ok_or_else(|| {
+                    "failed to determine output format: either use a known file extension (jpeg, png or webp) or specify the format using `--output-format`".to_string()
+                })?,
+            };
+            let output =
+                Output::file(path).map_err(|err| format!("failed to open output file: {}", err))?;
+            (format, output)
+        }
+        None => {
+            let format = Format::from_ext(matches.value_of("output-format").ok_or_else(|| "use `--output` to write to a file or `--output-format` to write to standard output".to_string())?).unwrap();
+            (format, Output::stdout())
+        }
+    };
+
+    let mut input_reader: Box<dyn std::io::Read> = match matches
+        .value_of_os("INPUT")
+        .and_then(|s| if s == "-" { None } else { Some(s) })
+    {
+        None => Box::new(std::io::stdin()),
+        Some(path) => {
+            Box::new(File::open(path).map_err(|err| format!("failed to open input file: {}", err))?)
+        }
+    };
+
+    // Read enough data to determine input file format by magic number.
+    let mut input_buffer = vec![0; 16];
+    input_reader
+        .read_exact(&mut input_buffer)
+        .map_err(|err| format!("failed to read magic number: {}", err))?;
+    let input_format = Format::from_magic(&input_buffer)
+        .ok_or_else(|| "unknown input format, expected jpeg, png or webp".to_string())?;
+    // Read rest of the input.
+    input_reader
+        .read_to_end(&mut input_buffer)
+        .map_err(|err| format!("failed to read input: {}", err))?;
+
+    let original_size = input_buffer.len();
+
+    let mut input_image = match input_format {
+        Format::JPEG => read_jpeg(&input_buffer),
+        Format::PNG => read_png(&input_buffer),
+        Format::WEBP => read_webp(&input_buffer),
+    }
+    .map_err(|err| format!("failed to read input: {}", err))?;
+
+    let (lossy_compress, lossless_compress): (LossyCompressor, Option<LosslessCompressor>) =
+        match output_format {
+            Format::JPEG => (
+                Box::new(move |img, q| compress_jpeg(img, q, chroma_subsampling)),
+                None,
+            ),
+            Format::PNG => (Box::new(compress_png), None),
+            Format::WEBP => (
+                Box::new(|img, q| compress_webp(img, q, false)),
+                Some(Box::new(|img| compress_webp(img, 100, true))),
+            ),
+        };
+
+    if !output_format.supports_transparency() || matches.is_present("no-transparency") {
+        let bg = parse_color(matches.value_of("background-color").unwrap()).unwrap();
+        input_image.alpha_blend(bg);
+    }
+
+    match compress_image(
+        input_image,
+        lossy_compress,
+        lossless_compress,
+        target,
+        min,
+        max,
+        original_size as u64,
+    ) {
+        Ok(output_buffer) => {
+            if output_buffer.len() <= original_size as usize {
+                output_writer
+                    .write(&output_buffer)
+                    .map_err(|err| format!("failed to write output: {}", err))?;
+                Ok(())
+            } else {
+                match fail_strategy {
+                    "none" => {
+                        eprintln!("warning: Output is larger than input but still writing output normally. This behavior can be changed with `--optimization-failed` option.");
+                        output_writer
+                            .write(&output_buffer)
+                            .map_err(|err| format!("failed to write output: {}", err))?;
+                        Ok(())
+                    }
+                    "exit" => {
+                        Err("error: Output would be larger than input, exiting now...".to_string())
+                    }
+                    "copy" => {
+                        eprintln!("warning: Output would be larger than input, copying input to output...");
+                        output_writer
+                            .write(&output_buffer)
+                            .map_err(|err| format!("failed to write output: {}", err))?;
+                        Ok(())
+                    }
+                    _ => unreachable!(),
+                }
+            }
+        }
+        Err(err) => Err(format!("failed to compress image: {}", err)),
+    }
+}
+
 fn main() {
     let matches = App::new("pio")
         .about("Perceptual Image Optimizer")
@@ -754,159 +950,10 @@ fn main() {
         )
         .get_matches();
 
-    let (output_format, mut output_writer): (Format, Box<dyn std::io::Write>) = match matches
-        .value_of_os("output")
-    {
-        Some(path) => {
-            let format = match matches.value_of("output-format") {
-                Some(format) => Format::from_ext(format).unwrap(),
-                None => Format::from_path(path).unwrap_or_else(|| {
-                    eprintln!("failed to determine output format: either use a known file extension (jpeg, png or webp) or specify the format using `--output-format`");
-                    std::process::exit(1);
-                }),
-            };
-            let output = File::create(path).unwrap_or_else(|err| {
-                eprintln!("failed to open output file: {}", err);
-                std::process::exit(1);
-            });
-            (format, Box::new(output))
-        }
-        None => {
-            let format = Format::from_ext(matches.value_of("output-format").unwrap_or_else(|| {
-                eprintln!("use `--output` to write to a file or `--output-format` to write to standard output");
-                std::process::exit(1);
-            }))
-            .unwrap();
-            (format, Box::new(std::io::stdout()))
-        }
-    };
-
-    let mut input_reader: Box<dyn std::io::Read> = match matches
-        .value_of_os("INPUT")
-        .and_then(|s| if s == "-" { None } else { Some(s) })
-    {
-        None => Box::new(std::io::stdin()),
-        Some(path) => Box::new(File::open(path).unwrap_or_else(|err| {
-            eprintln!("failed to open input file: {}", err);
-            std::process::exit(1);
-        })),
-    };
-
-    // Read enough data to determine input file format by magic number.
-    let mut input_buffer = vec![0; 16];
-    input_reader
-        .read_exact(&mut input_buffer)
-        .unwrap_or_else(|err| {
-            eprintln!("failed to read magic number: {}", err);
-            std::process::exit(1);
-        });
-    let input_format = Format::from_magic(&input_buffer).unwrap_or_else(|| {
-        eprintln!("unknown input format, expected jpeg, png or webp");
+    pio(matches).unwrap_or_else(|err| {
+        eprintln!("{}", err);
         std::process::exit(1);
-    });
-    // Read rest of the input.
-    input_reader
-        .read_to_end(&mut input_buffer)
-        .unwrap_or_else(|err| {
-            eprintln!("failed to read input: {}", err);
-            std::process::exit(1);
-        });
-
-    let original_size = input_buffer.len();
-
-    let quality = matches.value_of("quality").unwrap().parse::<u8>().unwrap();
-
-    let spread = matches.value_of("spread").unwrap().parse::<u8>().unwrap();
-
-    let target = QUALITY_SSIM[quality as usize];
-
-    let min = match matches.value_of("min") {
-        Some(s) => s.parse().unwrap(),
-        None => std::cmp::max(0, quality - std::cmp::min(quality, spread)),
-    };
-    let max = match matches.value_of("max") {
-        Some(s) => s.parse().unwrap(),
-        None => std::cmp::min(quality + spread, 100),
-    };
-    if min > max {
-        eprintln!("min must be smaller or equal to max");
-        std::process::exit(1);
-    }
-
-    let fail_strategy = matches.value_of("optimization-failed").unwrap();
-
-    let chroma_subsampling = match matches.value_of("chroma-subsampling").unwrap() {
-        "420" => ChromaSubsampling::_420,
-        "422" => ChromaSubsampling::_422,
-        "444" => ChromaSubsampling::_444,
-        _ => unreachable!(),
-    };
-
-    let mut input_image = match match input_format {
-        Format::JPEG => read_jpeg(&input_buffer),
-        Format::PNG => read_png(&input_buffer),
-        Format::WEBP => read_webp(&input_buffer),
-    } {
-        Ok(image) => image,
-        Err(err) => {
-            eprintln!("Failed to read input: {}", err);
-            std::process::exit(1);
-        }
-    };
-
-    let (lossy_compress, lossless_compress): (LossyCompressor, Option<LosslessCompressor>) =
-        match output_format {
-            Format::JPEG => (
-                Box::new(move |img, q| compress_jpeg(img, q, chroma_subsampling)),
-                None,
-            ),
-            Format::PNG => (Box::new(compress_png), None),
-            Format::WEBP => (
-                Box::new(|img, q| compress_webp(img, q, false)),
-                Some(Box::new(|img| compress_webp(img, 100, true))),
-            ),
-        };
-
-    if !output_format.supports_transparency() || matches.is_present("no-transparency") {
-        let bg = parse_color(matches.value_of("background-color").unwrap()).unwrap();
-        input_image.alpha_blend(bg);
-    }
-
-    match compress_image(
-        input_image,
-        lossy_compress,
-        lossless_compress,
-        target,
-        min,
-        max,
-        original_size as u64,
-    ) {
-        Ok(output_buffer) => {
-            if output_buffer.len() <= original_size as usize {
-                output_writer.write_all(&output_buffer).unwrap();
-            } else {
-                match fail_strategy {
-                    "none" => {
-                        eprintln!("Warning: Output is larger than input but still writing output normally. This behavior can be changed with `--optimization-failed` option.");
-                        output_writer.write_all(&output_buffer).unwrap();
-                    }
-                    "exit" => {
-                        eprintln!("Error: Output would be larger than input, exiting now...");
-                        std::process::exit(1);
-                    }
-                    "copy" => {
-                        eprintln!("Warning: Output would be larger than input, copying input to output...");
-                        output_writer.write_all(&input_buffer).unwrap();
-                    }
-                    _ => unreachable!(),
-                }
-            }
-        }
-        Err(err) => {
-            eprintln!("Failed to compress image: {}", err);
-            std::process::exit(1);
-        }
-    }
+    })
 }
 
 #[cfg(test)]
@@ -1009,6 +1056,20 @@ mod tests {
         let mut cmd = Command::cargo_bin("pio")?;
         cmd.arg(input).arg("-o").arg(&output).assert().success();
         assert_image_similarity(input, output)?;
+        Ok(())
+    }
+
+    #[test]
+    fn does_not_create_empty_output_on_invalid_input() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempdir()?;
+        let output = dir.path().join("output.png");
+        let mut cmd = Command::cargo_bin("pio")?;
+        cmd.arg("-o")
+            .arg(&output)
+            .write_stdin("RIFF....WEBP....")
+            .assert()
+            .failure();
+        assert!(std::fs::read(&output).is_err());
         Ok(())
     }
 }

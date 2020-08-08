@@ -15,6 +15,7 @@ use std::io::Read;
 use std::mem::MaybeUninit;
 use std::path::Path;
 
+#[derive(PartialEq)]
 enum ColorSpace {
     Gray,
     GrayAlpha,
@@ -241,19 +242,20 @@ fn compress_jpeg(
     cinfo.set_quality(quality as f32);
     cinfo.set_mem_dest();
 
-    let chroma_subsampling = match chroma_subsampling {
-        ChromaSubsampling::_444 => [[1, 1], [1, 1], [1, 1]],
-        ChromaSubsampling::_422 => [[2, 2], [2, 1], [2, 1]],
-        ChromaSubsampling::_420 => [[2, 2], [1, 1], [1, 1]],
-    };
-
-    for (c, samp) in cinfo
-        .components_mut()
-        .iter_mut()
-        .zip(chroma_subsampling.iter())
-    {
-        c.v_samp_factor = samp[0];
-        c.h_samp_factor = samp[1];
+    if image.color_space != ColorSpace::Gray {
+        let chroma_subsampling = match chroma_subsampling {
+            ChromaSubsampling::_444 => [[1, 1], [1, 1], [1, 1]],
+            ChromaSubsampling::_422 => [[2, 2], [2, 1], [2, 1]],
+            ChromaSubsampling::_420 => [[2, 2], [1, 1], [1, 1]],
+        };
+        for (c, samp) in cinfo
+            .components_mut()
+            .iter_mut()
+            .zip(chroma_subsampling.iter())
+        {
+            c.v_samp_factor = samp[0];
+            c.h_samp_factor = samp[1];
+        }
     }
 
     cinfo.start_compress();

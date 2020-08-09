@@ -245,7 +245,7 @@ fn compress_jpeg(
     if image.color_space != ColorSpace::Gray {
         let chroma_subsampling = match chroma_subsampling {
             ChromaSubsampling::_444 => [[1, 1], [1, 1], [1, 1]],
-            ChromaSubsampling::_422 => [[2, 2], [2, 1], [2, 1]],
+            ChromaSubsampling::_422 => [[2, 1], [1, 1], [1, 1]],
             ChromaSubsampling::_420 => [[2, 2], [1, 1], [1, 1]],
         };
         for (c, samp) in cinfo
@@ -253,8 +253,8 @@ fn compress_jpeg(
             .iter_mut()
             .zip(chroma_subsampling.iter())
         {
-            c.v_samp_factor = samp[0];
-            c.h_samp_factor = samp[1];
+            c.h_samp_factor = samp[0];
+            c.v_samp_factor = samp[1];
         }
     }
 

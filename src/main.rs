@@ -11,9 +11,9 @@ use rgb::{alt::GRAY8, ComponentBytes, RGB8, RGBA8};
 
 use std::ffi::OsStr;
 use std::fs::File;
-use std::io::Read;
-use std::mem::MaybeUninit;
-use std::path::Path;
+use std::io::{Read, Stdout};
+use std::mem::{ManuallyDrop, MaybeUninit};
+use std::path::{Path, PathBuf};
 
 #[derive(PartialEq)]
 enum ColorSpace {
@@ -661,10 +661,10 @@ fn parse_color(input: &str) -> Result<RGB8, String> {
 }
 
 enum Output {
-    Stdout(std::io::Stdout),
+    Stdout(Stdout),
     File {
-        path: std::path::PathBuf,
-        file: std::fs::File,
+        path: PathBuf,
+        file: ManuallyDrop<File>,
         empty: bool,
     },
 }
@@ -674,7 +674,7 @@ impl Output {
         let path = path.as_ref();
         File::create(path).map(|file| Self::File {
             path: path.to_path_buf(),
-            file,
+            file: ManuallyDrop::new(file),
             empty: true,
         })
     }
@@ -705,16 +705,11 @@ impl Output {
 
 impl Drop for Output {
     fn drop(&mut self) {
-        match self {
-            Output::File {
-                path,
-                file,
-                empty: true,
-            } => {
-                drop(file);
-                std::fs::remove_file(path).unwrap_or_else(|_err| {})
+        if let Output::File { path, file, empty } = self {
+            unsafe { ManuallyDrop::drop(file) };
+            if *empty {
+                std::fs::remove_file(path).unwrap_or_else(|_err| {});
             }
-            _ => {}
         }
     }
 }

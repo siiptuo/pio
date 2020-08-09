@@ -666,16 +666,20 @@ enum Output {
         path: PathBuf,
         file: ManuallyDrop<File>,
         empty: bool,
+        is_file: bool,
     },
 }
 
 impl Output {
     fn file(path: impl AsRef<Path>) -> std::io::Result<Self> {
         let path = path.as_ref();
-        File::create(path).map(|file| Self::File {
-            path: path.to_path_buf(),
-            file: ManuallyDrop::new(file),
-            empty: true,
+        File::create(path).and_then(|file| {
+            Ok(Self::File {
+                is_file: file.metadata()?.is_file(),
+                path: path.to_path_buf(),
+                file: ManuallyDrop::new(file),
+                empty: true,
+            })
         })
     }
 
@@ -688,14 +692,20 @@ impl Output {
         match self {
             Output::Stdout(ref mut stdout) => {
                 stdout.write_all(buf)?;
+                stdout.flush()?;
             }
             Output::File {
                 ref mut file,
                 ref mut empty,
+                is_file,
                 ..
             } => {
                 file.write_all(buf)?;
-                file.sync_all()?;
+                if is_file {
+                    file.sync_all()?;
+                } else {
+                    file.flush()?;
+                }
                 *empty = false;
             }
         };
@@ -705,9 +715,15 @@ impl Output {
 
 impl Drop for Output {
     fn drop(&mut self) {
-        if let Output::File { path, file, empty } = self {
+        if let Output::File {
+            path,
+            file,
+            empty,
+            is_file,
+        } = self
+        {
             unsafe { ManuallyDrop::drop(file) };
-            if *empty {
+            if *empty && *is_file {
                 std::fs::remove_file(path).unwrap_or_else(|_err| {});
             }
         }
@@ -1065,6 +1081,21 @@ mod tests {
             .assert()
             .failure();
         assert!(std::fs::read(&output).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn outputs_to_special_files() -> Result<(), Box<dyn std::error::Error>> {
+        let mut cmd = Command::cargo_bin("pio")?;
+        cmd.args(&[
+            "images/image1-original.png",
+            "-o",
+            "/dev/null",
+            "--output-format",
+            "jpeg",
+        ])
+        .assert()
+        .success();
         Ok(())
     }
 }

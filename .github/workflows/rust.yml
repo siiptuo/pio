@@ -33,6 +33,15 @@ jobs:
       - name: Run
         run: cargo fmt --all -- --check
 
+  test:
+    runs-on: ubuntu-20.04
+    steps:
+      - uses: actions/checkout@v2
+      - name: Build
+        run: cargo build
+      - name: Test
+        run: cargo test
+
   build:
     runs-on: ${{ matrix.os }}
     strategy:

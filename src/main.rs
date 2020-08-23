@@ -11,10 +11,11 @@ use rgb::{alt::GRAY8, ComponentBytes, RGB8, RGBA8};
 
 use std::ffi::OsStr;
 use std::fs::File;
-use std::io::Read;
-use std::mem::MaybeUninit;
-use std::path::Path;
+use std::io::{Read, Write};
+use std::mem::{ManuallyDrop, MaybeUninit};
+use std::path::{Path, PathBuf};
 
+#[derive(PartialEq)]
 enum ColorSpace {
     Gray,
     GrayAlpha,
@@ -355,7 +356,11 @@ fn read_jpeg(buffer: &[u8]) -> ReadResult {
     Ok(orient_image(image, orientation))
 }
 
-fn compress_jpeg(image: &Image, quality: u8) -> CompressResult {
+fn compress_jpeg(
+    image: &Image,
+    quality: u8,
+    chroma_subsampling: ChromaSubsampling,
+) -> CompressResult {
     let mut cinfo = mozjpeg::Compress::new(match image.color_space {
         ColorSpace::Gray => mozjpeg::ColorSpace::JCS_GRAYSCALE,
         _ => mozjpeg::ColorSpace::JCS_EXT_RGBX,
@@ -363,6 +368,23 @@ fn compress_jpeg(image: &Image, quality: u8) -> CompressResult {
     cinfo.set_size(image.width, image.height);
     cinfo.set_quality(quality as f32);
     cinfo.set_mem_dest();
+
+    if image.color_space != ColorSpace::Gray {
+        let chroma_subsampling = match chroma_subsampling {
+            ChromaSubsampling::_444 => [[1, 1], [1, 1], [1, 1]],
+            ChromaSubsampling::_422 => [[2, 1], [1, 1], [1, 1]],
+            ChromaSubsampling::_420 => [[2, 2], [1, 1], [1, 1]],
+        };
+        for (c, samp) in cinfo
+            .components_mut()
+            .iter_mut()
+            .zip(chroma_subsampling.iter())
+        {
+            c.h_samp_factor = samp[0];
+            c.v_samp_factor = samp[1];
+        }
+    }
+
     cinfo.start_compress();
     if !match image.color_space {
         ColorSpace::Gray => cinfo.write_scanlines(image.to_gray().buf().as_bytes()),
@@ -637,7 +659,7 @@ fn compress_webp(image: &Image, quality: u8, lossless: bool) -> CompressResult {
     }
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Copy, Clone)]
 enum Format {
     JPEG,
     PNG,
@@ -677,6 +699,13 @@ impl Format {
             Self::WEBP => true,
         }
     }
+}
+
+#[derive(Copy, Clone)]
+enum ChromaSubsampling {
+    _420,
+    _422,
+    _444,
 }
 
 fn compress_image(
@@ -811,6 +840,328 @@ fn parse_color(input: &str) -> Result<RGB8, String> {
     ))
 }
 
+enum Output {
+    /// Write to standard output or special file (e.g. /dev/null)
+    Stream(Box<dyn Write>),
+
+    /// Write to regular file
+    WriteFile {
+        path: PathBuf,
+        file: ManuallyDrop<File>,
+        dir: File,
+        finished: bool,
+    },
+
+    /// Overwrite file atomically
+    OverwriteFile {
+        dst_path: PathBuf,
+        tmp_path: PathBuf,
+        dst_dir: File,
+        tmp_file: ManuallyDrop<File>,
+        tmp_file_closed: bool,
+        finished: bool,
+    },
+}
+
+fn random_file(root: impl AsRef<Path>) -> std::io::Result<(PathBuf, File)> {
+    use rand::distributions::Alphanumeric;
+    use rand::{thread_rng, Rng};
+    use std::fs::OpenOptions;
+
+    let rng = thread_rng();
+
+    loop {
+        let path = root.as_ref().with_file_name(format!(
+            ".pio-{}.tmp",
+            rng.sample_iter(&Alphanumeric).take(16).collect::<String>()
+        ));
+        match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(file) => break Ok((path, file)),
+            Err(err) => match err.kind() {
+                std::io::ErrorKind::AlreadyExists => continue,
+                _ => break Err(err),
+            },
+        };
+    }
+}
+
+fn file_directory(path: impl AsRef<Path>) -> PathBuf {
+    match path.as_ref().parent() {
+        Some(parent) => {
+            if parent.as_os_str().len() == 0 {
+                PathBuf::from(".")
+            } else {
+                parent.to_path_buf()
+            }
+        }
+        None => PathBuf::from("."),
+    }
+}
+
+impl Output {
+    fn write_file(path: impl AsRef<Path>) -> std::io::Result<Self> {
+        let path = path.as_ref();
+        let file = File::create(path)?;
+        if file.metadata()?.is_file() {
+            Ok(Self::WriteFile {
+                path: path.to_path_buf(),
+                file: ManuallyDrop::new(file),
+                dir: File::open(file_directory(path))?,
+                finished: false,
+            })
+        } else {
+            Ok(Self::Stream(Box::new(file)))
+        }
+    }
+
+    fn overwrite_file(path: impl AsRef<Path>) -> Result<Self, Box<dyn std::error::Error>> {
+        if !std::fs::metadata(&path)?.is_file() {
+            return Err("expected regular file".into());
+        }
+        let path = path.as_ref();
+        let (tmp_path, tmp_file) = random_file(path)?;
+        let dst_dir = File::open(file_directory(path))?;
+        Ok(Self::OverwriteFile {
+            dst_path: path.to_path_buf(),
+            tmp_path,
+            tmp_file: ManuallyDrop::new(tmp_file),
+            tmp_file_closed: false,
+            dst_dir,
+            finished: false,
+        })
+    }
+
+    fn stdout() -> Self {
+        Self::Stream(Box::new(std::io::stdout()))
+    }
+
+    fn write(mut self, buf: &[u8]) -> std::io::Result<()> {
+        match self {
+            Output::Stream(ref mut write) => {
+                write.write_all(buf)?;
+                write.flush()?;
+            }
+            Output::WriteFile {
+                ref mut file,
+                ref mut finished,
+                ref mut dir,
+                ..
+            } => {
+                file.write_all(buf)?;
+                file.sync_all()?;
+                dir.sync_all()?;
+                *finished = true;
+            }
+            Output::OverwriteFile {
+                ref dst_path,
+                ref tmp_path,
+                ref mut tmp_file,
+                ref mut dst_dir,
+                ref mut finished,
+                ref mut tmp_file_closed,
+            } => {
+                tmp_file.write_all(buf)?;
+                tmp_file.sync_all()?;
+                unsafe { ManuallyDrop::drop(tmp_file) }
+                *tmp_file_closed = true;
+                std::fs::rename(tmp_path, dst_path)?;
+                dst_dir.sync_all()?;
+                *finished = true;
+            }
+        };
+        Ok(())
+    }
+}
+
+impl Drop for Output {
+    fn drop(&mut self) {
+        match self {
+            Output::Stream(_) => {}
+            Output::WriteFile {
+                path,
+                file,
+                finished,
+                ..
+            } => {
+                unsafe { ManuallyDrop::drop(file) }
+                if !*finished {
+                    std::fs::remove_file(path).unwrap_or_else(|_err| {});
+                }
+            }
+            Output::OverwriteFile {
+                tmp_path,
+                tmp_file,
+                finished,
+                tmp_file_closed,
+                ..
+            } => {
+                if !*tmp_file_closed {
+                    unsafe { ManuallyDrop::drop(tmp_file) }
+                }
+                if !*finished {
+                    std::fs::remove_file(tmp_path).unwrap_or_else(|_err| {});
+                }
+            }
+        }
+    }
+}
+
+fn pio(matches: clap::ArgMatches) -> Result<(), String> {
+    let quality = matches.value_of("quality").unwrap().parse::<u8>().unwrap();
+
+    let spread = matches.value_of("spread").unwrap().parse::<u8>().unwrap();
+
+    let target = QUALITY_SSIM[quality as usize];
+
+    let min = match matches.value_of("min") {
+        Some(s) => s.parse().unwrap(),
+        None => std::cmp::max(0, quality - std::cmp::min(quality, spread)),
+    };
+    let max = match matches.value_of("max") {
+        Some(s) => s.parse().unwrap(),
+        None => std::cmp::min(quality + spread, 100),
+    };
+    if min > max {
+        return Err("min must be smaller or equal to max".to_string());
+    }
+
+    let fail_strategy = matches.value_of("optimization-failed").unwrap();
+
+    let chroma_subsampling = match matches.value_of("chroma-subsampling").unwrap() {
+        "420" => ChromaSubsampling::_420,
+        "422" => ChromaSubsampling::_422,
+        "444" => ChromaSubsampling::_444,
+        _ => unreachable!(),
+    };
+
+    let (input_format, input_buffer) = {
+        let mut reader: Box<dyn std::io::Read> = match matches.value_of_os("INPUT") {
+            None => {
+                if matches.value_of("output").is_none()
+                    && matches.value_of("output-format").is_none()
+                {
+                    return Err("reading from standard input, use `--output` to write to a file or `--output-format` to write to standard output".to_string());
+                }
+                Box::new(std::io::stdin())
+            }
+            Some(path) => Box::new(
+                File::open(path).map_err(|err| format!("failed to open input file: {}", err))?,
+            ),
+        };
+
+        // Read enough data to determine input file format by magic number.
+        let mut buf = vec![0; 16];
+        reader
+            .read_exact(&mut buf)
+            .map_err(|err| format!("failed to read magic number: {}", err))?;
+        let fmt = Format::from_magic(&buf)
+            .ok_or_else(|| "unknown input format, expected jpeg, png or webp".to_string())?;
+        // Read rest of the input.
+        reader
+            .read_to_end(&mut buf)
+            .map_err(|err| format!("failed to read input: {}", err))?;
+
+        (fmt, buf)
+    };
+
+    let (output_format, output_writer) = if matches.is_present("in-place") {
+        let format = match matches.value_of("output-format") {
+            Some(format) => Format::from_ext(format).unwrap(),
+            None => input_format.clone(),
+        };
+        let path = matches.value_of_os("INPUT").unwrap();
+        let output = Output::overwrite_file(path)
+            .map_err(|err| format!("unable to overwrite file: {}", err))?;
+        (format, output)
+    } else {
+        match matches.value_of_os("output") {
+            Some(path) => {
+                let format = match matches.value_of("output-format") {
+                    Some(format) => Format::from_ext(format).unwrap(),
+                    None => Format::from_path(path).ok_or_else(|| {
+                        "failed to determine output format: either use a known file extension (jpeg, png or webp) or specify the format using `--output-format`".to_string()
+                    })?,
+                };
+                let output = Output::write_file(path)
+                    .map_err(|err| format!("failed to open output file: {}", err))?;
+                (format, output)
+            }
+            None => {
+                let format = Format::from_ext(matches.value_of("output-format").ok_or_else(|| "use `--output` to write to a file or `--output-format` to write to standard output".to_string())?).unwrap();
+                (format, Output::stdout())
+            }
+        }
+    };
+
+    let original_size = input_buffer.len();
+
+    let mut input_image = match input_format {
+        Format::JPEG => read_jpeg(&input_buffer),
+        Format::PNG => read_png(&input_buffer),
+        Format::WEBP => read_webp(&input_buffer),
+    }
+    .map_err(|err| format!("failed to read input: {}", err))?;
+
+    let (lossy_compress, lossless_compress): (LossyCompressor, Option<LosslessCompressor>) =
+        match output_format {
+            Format::JPEG => (
+                Box::new(move |img, q| compress_jpeg(img, q, chroma_subsampling)),
+                None,
+            ),
+            Format::PNG => (Box::new(compress_png), None),
+            Format::WEBP => (
+                Box::new(|img, q| compress_webp(img, q, false)),
+                Some(Box::new(|img| compress_webp(img, 100, true))),
+            ),
+        };
+
+    if !output_format.supports_transparency() || matches.is_present("no-transparency") {
+        let bg = parse_color(matches.value_of("background-color").unwrap()).unwrap();
+        input_image.alpha_blend(bg);
+    }
+
+    match compress_image(
+        input_image,
+        lossy_compress,
+        lossless_compress,
+        target,
+        min,
+        max,
+        original_size as u64,
+    ) {
+        Ok(output_buffer) => {
+            if output_buffer.len() <= original_size as usize {
+                output_writer
+                    .write(&output_buffer)
+                    .map_err(|err| format!("failed to write output: {}", err))?;
+                Ok(())
+            } else {
+                match fail_strategy {
+                    "none" => {
+                        eprintln!("warning: Output is larger than input but still writing output normally. This behavior can be changed with `--optimization-failed` option.");
+                        output_writer
+                            .write(&output_buffer)
+                            .map_err(|err| format!("failed to write output: {}", err))?;
+                        Ok(())
+                    }
+                    "exit" => {
+                        Err("error: Output would be larger than input, exiting now...".to_string())
+                    }
+                    "copy" => {
+                        eprintln!("warning: Output would be larger than input, copying input to output...");
+                        output_writer
+                            .write(&output_buffer)
+                            .map_err(|err| format!("failed to write output: {}", err))?;
+                        Ok(())
+                    }
+                    _ => unreachable!(),
+                }
+            }
+        }
+        Err(err) => Err(format!("failed to compress image: {}", err)),
+    }
+}
+
 fn main() {
     let matches = App::new("pio")
         .about("Perceptual Image Optimizer")
@@ -834,6 +1185,13 @@ fn main() {
                 .value_name("format")
                 .takes_value(true)
                 .possible_values(&["jpeg", "png", "webp"]),
+        )
+        .arg(
+            Arg::with_name("in-place")
+                .long("in-place")
+                .help("Overwrite input file in-place")
+                .conflicts_with("output")
+                .requires("INPUT"),
         )
         .arg(
             Arg::with_name("quality")
@@ -894,149 +1252,152 @@ fn main() {
                 .default_value("none")
                 .possible_values(&["none", "exit", "copy"]),
         )
+        .arg(
+            Arg::with_name("chroma-subsampling")
+                .long("chroma-subsampling")
+                .value_name("xxx")
+                .help("Specifies chroma subsampling")
+                .takes_value(true)
+                .default_value("420")
+                .possible_values(&["444", "422", "420"]),
+        )
         .get_matches();
 
-    let (output_format, mut output_writer): (Format, Box<dyn std::io::Write>) = match matches
-        .value_of_os("output")
-    {
-        Some(path) => {
-            let format = match matches.value_of("output-format") {
-                Some(format) => Format::from_ext(format).unwrap(),
-                None => Format::from_path(path).unwrap_or_else(|| {
-                    eprintln!("failed to determine output format: either use a known file extension (jpeg, png or webp) or specify the format using `--output-format`");
-                    std::process::exit(1);
-                }),
-            };
-            let output = File::create(path).unwrap_or_else(|err| {
-                eprintln!("failed to open output file: {}", err);
-                std::process::exit(1);
-            });
-            (format, Box::new(output))
-        }
-        None => {
-            let format = Format::from_ext(matches.value_of("output-format").unwrap_or_else(|| {
-                eprintln!("use `--output` to write to a file or `--output-format` to write to standard output");
-                std::process::exit(1);
-            }))
-            .unwrap();
-            (format, Box::new(std::io::stdout()))
-        }
-    };
-
-    let mut input_reader: Box<dyn std::io::Read> = match matches
-        .value_of_os("INPUT")
-        .and_then(|s| if s == "-" { None } else { Some(s) })
-    {
-        None => Box::new(std::io::stdin()),
-        Some(path) => Box::new(File::open(path).unwrap_or_else(|err| {
-            eprintln!("failed to open input file: {}", err);
-            std::process::exit(1);
-        })),
-    };
-
-    // Read enough data to determine input file format by magic number.
-    let mut input_buffer = vec![0; 16];
-    input_reader
-        .read_exact(&mut input_buffer)
-        .unwrap_or_else(|err| {
-            eprintln!("failed to read magic number: {}", err);
-            std::process::exit(1);
-        });
-    let input_format = Format::from_magic(&input_buffer).unwrap_or_else(|| {
-        eprintln!("unknown input format, expected jpeg, png or webp");
+    pio(matches).unwrap_or_else(|err| {
+        eprintln!("{}", err);
         std::process::exit(1);
-    });
-    // Read rest of the input.
-    input_reader
-        .read_to_end(&mut input_buffer)
-        .unwrap_or_else(|err| {
-            eprintln!("failed to read input: {}", err);
-            std::process::exit(1);
-        });
+    })
+}
 
-    let original_size = input_buffer.len();
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
 
-    let quality = matches.value_of("quality").unwrap().parse::<u8>().unwrap();
+    use assert_cmd::Command;
+    use tempfile::tempdir;
 
-    let spread = matches.value_of("spread").unwrap().parse::<u8>().unwrap();
-
-    let target = QUALITY_SSIM[quality as usize];
-
-    let min = match matches.value_of("min") {
-        Some(s) => s.parse().unwrap(),
-        None => std::cmp::max(0, quality - std::cmp::min(quality, spread)),
-    };
-    let max = match matches.value_of("max") {
-        Some(s) => s.parse().unwrap(),
-        None => std::cmp::min(quality + spread, 100),
-    };
-    if min > max {
-        eprintln!("min must be smaller or equal to max");
-        std::process::exit(1);
+    fn convert_image(
+        input: impl AsRef<Path>,
+        output: impl AsRef<Path>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new("convert")
+            .arg(input.as_ref())
+            .arg("-quality")
+            .arg("100")
+            .arg(output.as_ref())
+            .output()?;
+        assert!(output.status.success());
+        Ok(())
     }
 
-    let fail_strategy = matches.value_of("optimization-failed").unwrap();
-
-    let mut input_image = match match input_format {
-        Format::JPEG => read_jpeg(&input_buffer),
-        Format::PNG => read_png(&input_buffer),
-        Format::WEBP => read_webp(&input_buffer),
-    } {
-        Ok(image) => image,
-        Err(err) => {
-            eprintln!("Failed to read input: {}", err);
-            std::process::exit(1);
-        }
-    };
-
-    let (lossy_compress, lossless_compress): (LossyCompressor, Option<LosslessCompressor>) =
-        match output_format {
-            Format::JPEG => (Box::new(compress_jpeg), None),
-            Format::PNG => (Box::new(compress_png), None),
-            Format::WEBP => (
-                Box::new(|img, q| compress_webp(img, q, false)),
-                Some(Box::new(|img| compress_webp(img, 100, true))),
-            ),
-        };
-
-    if !output_format.supports_transparency() || matches.is_present("no-transparency") {
-        let bg = parse_color(matches.value_of("background-color").unwrap()).unwrap();
-        input_image.alpha_blend(bg);
+    fn assert_image_similarity(
+        image1: impl AsRef<Path>,
+        image2: impl AsRef<Path>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new("compare")
+            .arg("-metric")
+            .arg("PSNR")
+            .arg(image1.as_ref())
+            .arg(image2.as_ref())
+            .arg("/dev/null")
+            .output()?;
+        let psnr: f32 = String::from_utf8(output.stderr)?.parse()?;
+        assert!(psnr > 30.0);
+        Ok(())
     }
 
-    match compress_image(
-        input_image,
-        lossy_compress,
-        lossless_compress,
-        target,
-        min,
-        max,
-        original_size as u64,
-    ) {
-        Ok(output_buffer) => {
-            if output_buffer.len() <= original_size as usize {
-                output_writer.write_all(&output_buffer).unwrap();
-            } else {
-                match fail_strategy {
-                    "none" => {
-                        eprintln!("Warning: Output is larger than input but still writing output normally. This behavior can be changed with `--optimization-failed` option.");
-                        output_writer.write_all(&output_buffer).unwrap();
-                    }
-                    "exit" => {
-                        eprintln!("Error: Output would be larger than input, exiting now...");
-                        std::process::exit(1);
-                    }
-                    "copy" => {
-                        eprintln!("Warning: Output would be larger than input, copying input to output...");
-                        output_writer.write_all(&input_buffer).unwrap();
-                    }
-                    _ => unreachable!(),
-                }
-            }
-        }
-        Err(err) => {
-            eprintln!("Failed to compress image: {}", err);
-            std::process::exit(1);
-        }
+    #[test]
+    fn fails_with_no_arguments() -> Result<(), Box<dyn std::error::Error>> {
+        let mut cmd = Command::cargo_bin("pio")?;
+        cmd.assert().failure().stderr(
+            "reading from standard input, use `--output` to write to a file or `--output-format` to write to standard output\n",
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn reads_jpeg() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempdir()?;
+        let input = dir.path().join("input.jpeg");
+        convert_image("images/image1-original.png", &input)?;
+        let output = dir.path().join("output.jpeg");
+        let mut cmd = Command::cargo_bin("pio")?;
+        cmd.arg(&input).arg("-o").arg(&output).assert().success();
+        assert_image_similarity(input, output)?;
+        Ok(())
+    }
+
+    #[test]
+    fn outputs_jpeg() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempdir()?;
+        let input = "images/image1-original.png";
+        let output = dir.path().join("output.jpeg");
+        let mut cmd = Command::cargo_bin("pio")?;
+        cmd.arg(input).arg("-o").arg(&output).assert().success();
+        assert_image_similarity(input, output)?;
+        Ok(())
+    }
+
+    #[test]
+    fn reads_webp() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempdir()?;
+        let input = dir.path().join("input.webp");
+        convert_image("images/image1-original.png", &input)?;
+        let output = dir.path().join("output.jpeg");
+        let mut cmd = Command::cargo_bin("pio")?;
+        cmd.arg(&input).arg("-o").arg(&output).assert().success();
+        assert_image_similarity(input, output)?;
+        Ok(())
+    }
+
+    #[test]
+    fn outputs_webp() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempdir()?;
+        let input = "images/image1-original.png";
+        let output = dir.path().join("output.webp");
+        let mut cmd = Command::cargo_bin("pio")?;
+        cmd.arg(input).arg("-o").arg(&output).assert().success();
+        assert_image_similarity(input, output)?;
+        Ok(())
+    }
+
+    #[test]
+    fn outputs_png() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempdir()?;
+        let input = "images/image1-original.png";
+        let output = dir.path().join("output.png");
+        let mut cmd = Command::cargo_bin("pio")?;
+        cmd.arg(input).arg("-o").arg(&output).assert().success();
+        assert_image_similarity(input, output)?;
+        Ok(())
+    }
+
+    #[test]
+    fn does_not_create_empty_output_on_invalid_input() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempdir()?;
+        let output = dir.path().join("output.png");
+        let mut cmd = Command::cargo_bin("pio")?;
+        cmd.arg("-o")
+            .arg(&output)
+            .write_stdin("RIFF....WEBP....")
+            .assert()
+            .failure();
+        assert!(std::fs::read(&output).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn outputs_to_special_files() -> Result<(), Box<dyn std::error::Error>> {
+        let mut cmd = Command::cargo_bin("pio")?;
+        cmd.args(&[
+            "images/image1-original.png",
+            "-o",
+            "/dev/null",
+            "--output-format",
+            "jpeg",
+        ])
+        .assert()
+        .success();
+        Ok(())
     }
 }

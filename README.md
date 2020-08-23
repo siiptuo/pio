@@ -159,7 +159,7 @@ If you need, you can override this automatic calculation by specifying `--min` a
 
 ### Reading
 
-- Essential Image Optimization ([archived](https://web.archive.org/web/20200424075529/https://images.guide/)) is a good introduction to different image formats and optimization techniques
+- Essential Image Optimization ([mirror](https://joppuyo.github.io/images-guide-mirror/), [wayback machine](https://web.archive.org/web/20200424075529/https://images.guide/)) is a good introduction to different image formats and optimization techniques
 - [Is WebP really better than JPEG?](https://siipo.la/blog/is-webp-really-better-than-jpeg) compares different images formats at the same SSIM index
 
 ## License

@@ -15,6 +15,20 @@ use std::io::{Read, Write};
 use std::mem::{ManuallyDrop, MaybeUninit};
 use std::path::{Path, PathBuf};
 
+const TINYSRGB: &[u8] = include_bytes!("tinysrgb.icc");
+
+fn is_srgb(profile: &lcms2::Profile) -> bool {
+    match profile
+        .info(lcms2::InfoType::Description, lcms2::Locale::none())
+        .as_ref()
+        .map(String::as_str)
+    {
+        // Facebook's TINYsRGB
+        Some("c2") => true,
+        _ => false,
+    }
+}
+
 #[derive(PartialEq)]
 enum ColorSpace {
     Gray,
@@ -284,16 +298,18 @@ fn read_jpeg(buffer: &[u8]) -> ReadResult {
             decompress.finish_decompress();
 
             if let Some(profile) = profile {
-                eprintln!("Transforming RGB to sRGB...");
-                let transform = lcms2::Transform::new(
-                    &profile,
-                    lcms2::PixelFormat::RGB_8,
-                    &lcms2::Profile::new_srgb(),
-                    lcms2::PixelFormat::RGB_8,
-                    lcms2::Intent::Perceptual,
-                )
-                .map_err(|err| err.to_string())?;
-                transform.transform_in_place(&mut data);
+                if !is_srgb(&profile) {
+                    eprintln!("Transforming RGB to sRGB...");
+                    let transform = lcms2::Transform::new(
+                        &profile,
+                        lcms2::PixelFormat::RGB_8,
+                        &lcms2::Profile::new_srgb(),
+                        lcms2::PixelFormat::RGB_8,
+                        lcms2::Intent::Perceptual,
+                    )
+                    .map_err(|err| err.to_string())?;
+                    transform.transform_in_place(&mut data);
+                }
             }
 
             Ok(Image::from_rgb(data, width, height))
@@ -386,6 +402,11 @@ fn compress_jpeg(
     }
 
     cinfo.start_compress();
+    // TODO: gray profile?
+    cinfo.write_marker(
+        mozjpeg::Marker::APP(2),
+        &[b"ICC_PROFILE\0\x01\x01", TINYSRGB].concat(),
+    );
     if !match image.color_space {
         ColorSpace::Gray => cinfo.write_scanlines(image.to_gray().buf().as_bytes()),
         _ => cinfo.write_scanlines(image.as_bytes()),
@@ -393,10 +414,12 @@ fn compress_jpeg(
         return Err("Failed to compress image data".to_string());
     }
     cinfo.finish_compress();
+
     let cdata = cinfo
         .data_to_vec()
         .map_err(|_err| "Failed to compress image".to_string())?;
     let image = read_jpeg(&cdata)?;
+
     Ok((image, cdata))
 }
 
@@ -422,15 +445,17 @@ fn read_png(buffer: &[u8]) -> ReadResult {
         eprintln!("transforming to srgb...");
         match lcms2::Profile::new_icc(&icc) {
             Ok(profile) => {
-                let transform = lcms2::Transform::new(
-                    &profile,
-                    lcms2::PixelFormat::RGBA_8,
-                    &lcms2::Profile::new_srgb(),
-                    lcms2::PixelFormat::RGBA_8,
-                    lcms2::Intent::Perceptual,
-                )
-                .map_err(|err| err.to_string())?;
-                transform.transform_in_place(&mut png.buffer);
+                if !is_srgb(&profile) {
+                    let transform = lcms2::Transform::new(
+                        &profile,
+                        lcms2::PixelFormat::RGBA_8,
+                        &lcms2::Profile::new_srgb(),
+                        lcms2::PixelFormat::RGBA_8,
+                        lcms2::Intent::Perceptual,
+                    )
+                    .map_err(|err| err.to_string())?;
+                    transform.transform_in_place(&mut png.buffer);
+                }
             }
             Err(err) => {
                 eprintln!("Failed to read ICC profile: {}", err);
@@ -553,15 +578,17 @@ fn read_webp(buffer: &[u8]) -> ReadResult {
             eprintln!("transforming to srgb...");
             match lcms2::Profile::new_icc(&icc) {
                 Ok(profile) => {
-                    let transform = lcms2::Transform::new(
-                        &profile,
-                        lcms2::PixelFormat::RGBA_8,
-                        &lcms2::Profile::new_srgb(),
-                        lcms2::PixelFormat::RGBA_8,
-                        lcms2::Intent::Perceptual,
-                    )
-                    .map_err(|err| err.to_string())?;
-                    transform.transform_in_place(&mut buffer);
+                    if !is_srgb(&profile) {
+                        let transform = lcms2::Transform::new(
+                            &profile,
+                            lcms2::PixelFormat::RGBA_8,
+                            &lcms2::Profile::new_srgb(),
+                            lcms2::PixelFormat::RGBA_8,
+                            lcms2::Intent::Perceptual,
+                        )
+                        .map_err(|err| err.to_string())?;
+                        transform.transform_in_place(&mut buffer);
+                    }
                 }
                 Err(err) => {
                     eprintln!("Failed to read ICC profile: {}", err);

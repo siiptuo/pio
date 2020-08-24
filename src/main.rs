@@ -697,27 +697,60 @@ fn compress_webp(image: &Image, quality: u8, lossless: bool) -> CompressResult {
             return Err("Failed to encode image data".to_string());
         }
 
-        let buffer = wrt.mem;
-        let len = wrt.size;
+        let data = WebPData {
+            bytes: wrt.mem,
+            size: wrt.size,
+        };
+
+        let mux = WebPMuxCreateInternal(&data, 0, WEBP_MUX_ABI_VERSION);
+        if mux.is_null() {
+            return Err("failed to create mux".to_string());
+        }
+
+        let profile = WebPData {
+            bytes: TINYSRGB.as_ptr(),
+            size: TINYSRGB.len(),
+        };
+
+        let ret = WebPMuxSetChunk(
+            mux,
+            b"ICCP" as *const _ as *const _,
+            &profile as *const _,
+            0,
+        );
+        if ret != WebPMuxError::WEBP_MUX_OK {
+            return Err("failed set ICCP chunk".to_string());
+        }
+
+        let mut output = MaybeUninit::<WebPData>::uninit();
+        let ret = WebPMuxAssemble(mux, output.as_mut_ptr());
+        if ret != WebPMuxError::WEBP_MUX_OK {
+            return Err("failed to assemble".to_string());
+        }
+        let mut output = output.assume_init();
+
+        WebPMuxDelete(mux);
 
         let capacity = image.width * image.height;
         let mut pixels: Vec<RGBA8> = Vec::with_capacity(capacity);
         pixels.set_len(capacity);
 
         let ret = WebPDecodeRGBAInto(
-            buffer,
-            len,
+            output.bytes,
+            output.size,
             pixels.as_mut_ptr() as *mut u8,
             4 * image.width * image.height,
             (4 * image.width) as i32,
         );
         if ret.is_null() {
+            WebPDataClear(&mut output);
             return Err("Failed to decode image data".to_string());
         }
 
-        // XXX: Not safe because `buffer` is not allocated by `Vec`.
-        //      Probably fine because size is not changed :)
-        let buffer = Vec::from_raw_parts(buffer, len as usize, len as usize);
+        // XXX: unnecessary copy
+        let buffer = std::slice::from_raw_parts(output.bytes, output.size as usize).to_vec();
+
+        WebPDataClear(&mut output);
 
         Ok((Image::from_rgba(pixels, image.width, image.height), buffer))
     }

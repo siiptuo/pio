@@ -484,48 +484,39 @@ fn compress_png(image: &Image, quality: u8) -> CompressResult {
     let buffer = {
         let mut encoder = lodepng::Encoder::new();
 
-        // sRGB chunk with perceptual rendering intent.
-        // encoder
-        //     .info_png_mut()
-        //     .create_chunk(lodepng::ChunkPosition::IHDR, b"sRGB", b"\x00")
-        //     .map_err(|err| err.to_string())?;
-        // // Recommended chunks in PNG 1.2 specification for compatibility with applications that do
-        // // not use the sRGB chunk.
-        // encoder
-        //     .info_png_mut()
-        //     .create_chunk(
-        //         lodepng::ChunkPosition::IHDR,
-        //         b"gAMA",
-        //         &45455u32.to_be_bytes(),
-        //     )
-        //     .map_err(|err| err.to_string())?;
-        // encoder
-        //     .info_png_mut()
-        //     .create_chunk(
-        //         lodepng::ChunkPosition::IHDR,
-        //         b"cHRM",
-        //         &[
-        //             31270u32.to_be_bytes(),
-        //             32900u32.to_be_bytes(),
-        //             64000u32.to_be_bytes(),
-        //             33000u32.to_be_bytes(),
-        //             30000u32.to_be_bytes(),
-        //             60000u32.to_be_bytes(),
-        //             15000u32.to_be_bytes(),
-        //             6000u32.to_be_bytes(),
-        //         ]
-        //         .concat(),
-        //     )
-        //     .map_err(|err| err.to_string())?;
-        // // iCCP chunk with ICC profile
-        // encoder
-        //     .info_png_mut()
-        //     .create_chunk(
-        //         lodepng::ChunkPosition::IHDR,
-        //         b"iCCP",
-        //         &[b"c2\0\x00", TINYSRGB_DEFLATE].concat(),
-        //     )
-        //     .map_err(|err| err.to_string())?;
+        // `sRGB` chunk with perceptual rendering intent.
+        encoder
+            .info_png_mut()
+            .create_chunk(lodepng::ChunkPosition::IHDR, b"sRGB", b"\x00")
+            .map_err(|err| err.to_string())?;
+        // Recommended chunks from PNG 1.2 specification for compatibility with applications that
+        // do not support the `sRGB` chunk.
+        encoder
+            .info_png_mut()
+            .create_chunk(
+                lodepng::ChunkPosition::IHDR,
+                b"gAMA",
+                &45455u32.to_be_bytes(),
+            )
+            .map_err(|err| err.to_string())?;
+        encoder
+            .info_png_mut()
+            .create_chunk(
+                lodepng::ChunkPosition::IHDR,
+                b"cHRM",
+                &[
+                    31270u32.to_be_bytes(),
+                    32900u32.to_be_bytes(),
+                    64000u32.to_be_bytes(),
+                    33000u32.to_be_bytes(),
+                    30000u32.to_be_bytes(),
+                    60000u32.to_be_bytes(),
+                    15000u32.to_be_bytes(),
+                    6000u32.to_be_bytes(),
+                ]
+                .concat(),
+            )
+            .map_err(|err| err.to_string())?;
 
         for color in &palette {
             encoder

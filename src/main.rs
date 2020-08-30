@@ -483,7 +483,7 @@ fn compress_png(image: &Image, quality: u8) -> CompressResult {
     let buffer = {
         let mut encoder = lodepng::Encoder::new();
 
-        // `sRGB` chunk with perceptual rendering intent.
+        // `sRGB` chunk where 0x00 specifies perceptual rendering intent.
         encoder
             .info_png_mut()
             .create_chunk(lodepng::ChunkPosition::IHDR, b"sRGB", b"\x00")
@@ -495,7 +495,7 @@ fn compress_png(image: &Image, quality: u8) -> CompressResult {
             .create_chunk(
                 lodepng::ChunkPosition::IHDR,
                 b"gAMA",
-                &45455u32.to_be_bytes(),
+                /* Gamma: 0. */ &45455u32.to_be_bytes(),
             )
             .map_err(|err| err.to_string())?;
         encoder
@@ -504,14 +504,14 @@ fn compress_png(image: &Image, quality: u8) -> CompressResult {
                 lodepng::ChunkPosition::IHDR,
                 b"cHRM",
                 &[
-                    31270u32.to_be_bytes(),
-                    32900u32.to_be_bytes(),
-                    64000u32.to_be_bytes(),
-                    33000u32.to_be_bytes(),
-                    30000u32.to_be_bytes(),
-                    60000u32.to_be_bytes(),
-                    15000u32.to_be_bytes(),
-                    6000u32.to_be_bytes(),
+                    /* White Point x: 0. */ 31270u32.to_be_bytes(),
+                    /* White Point y: 0. */ 32900u32.to_be_bytes(),
+                    /* Red x:         0. */ 64000u32.to_be_bytes(),
+                    /* Red y:         0. */ 33000u32.to_be_bytes(),
+                    /* Green x:       0. */ 30000u32.to_be_bytes(),
+                    /* Green y:       0. */ 60000u32.to_be_bytes(),
+                    /* Blue x:        0. */ 15000u32.to_be_bytes(),
+                    /* Blue y:        0.0 */ 6000u32.to_be_bytes(),
                 ]
                 .concat(),
             )

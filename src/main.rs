@@ -348,7 +348,7 @@ fn read_jpeg(buffer: &[u8]) -> ReadResult {
             eprintln!("Transforming CMYK to sRGB...");
             let transform = lcms2::Transform::new(
                 &profile,
-                lcms2::PixelFormat::CMYK_8,
+                lcms2::PixelFormat::CMYK_8_REV,
                 &lcms2::Profile::new_srgb(),
                 lcms2::PixelFormat::RGB_8,
                 lcms2::Intent::Perceptual,
@@ -356,7 +356,6 @@ fn read_jpeg(buffer: &[u8]) -> ReadResult {
             .map_err(|err| err.to_string())?;
 
             let mut output = vec![RGB8::new(0, 0, 0); data.len()];
-
             transform.transform_pixels(&data, &mut output);
 
             Ok(Image::from_rgb(output, width, height))

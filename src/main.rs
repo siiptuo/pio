@@ -21,8 +21,7 @@ const GRAY_PROFILE: &[u8] = include_bytes!("../profiles/sGrey-v2-nano.icc");
 fn is_srgb(profile: &lcms2::Profile) -> bool {
     match profile
         .info(lcms2::InfoType::Description, lcms2::Locale::none())
-        .as_ref()
-        .map(String::as_str)
+        .as_deref()
     {
         // TINYsRGB by Facebook
         // (https://www.facebook.com/notes/facebook-engineering/under-the-hood-improving-facebook-photos/10150630639853920)
@@ -1004,7 +1003,7 @@ fn random_file(root: impl AsRef<Path>) -> std::io::Result<(PathBuf, File)> {
 fn file_directory(path: impl AsRef<Path>) -> PathBuf {
     match path.as_ref().parent() {
         Some(parent) => {
-            if parent.as_os_str().len() == 0 {
+            if parent.as_os_str().is_empty() {
                 PathBuf::from(".")
             } else {
                 parent.to_path_buf()
@@ -1183,7 +1182,7 @@ fn pio(matches: clap::ArgMatches) -> Result<(), String> {
     let (output_format, output_writer) = if matches.is_present("in-place") {
         let format = match matches.value_of("output-format") {
             Some(format) => Format::from_ext(format).unwrap(),
-            None => input_format.clone(),
+            None => input_format,
         };
         let path = matches.value_of_os("INPUT").unwrap();
         let output = Output::overwrite_file(path)

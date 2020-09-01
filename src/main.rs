@@ -15,8 +15,8 @@ use std::io::{Read, Write};
 use std::mem::{ManuallyDrop, MaybeUninit};
 use std::path::{Path, PathBuf};
 
-const TINYSRGB: &[u8] = include_bytes!("tinysrgb.icc");
-// const TINYSRGB_DEFLATE: &[u8] = include_bytes!("tinysrgb.icc.deflate");
+const SRGB_PROFILE: &[u8] = include_bytes!("../profiles/sRGB-v2-nano.icc");
+const GRAY_PROFILE: &[u8] = include_bytes!("../profiles/sGrey-v2-nano.icc");
 
 fn is_srgb(profile: &lcms2::Profile) -> bool {
     match profile
@@ -24,9 +24,18 @@ fn is_srgb(profile: &lcms2::Profile) -> bool {
         .as_ref()
         .map(String::as_str)
     {
-        // Facebook's TINYsRGB
+        // TINYsRGB by Facebook
+        // (https://www.facebook.com/notes/facebook-engineering/under-the-hood-improving-facebook-photos/10150630639853920)
         Some("c2") => true,
-        _ => false,
+        // sRGBz by Øyvind Kolås (https://pippin.gimp.org/sRGBz/)
+        Some("sRGBz") | Some("z") => true,
+        // Compact ICC Profiles by Clinton Ingram
+        // (https://github.com/saucecontrol/Compact-ICC-Profiles/)
+        Some("nRGB") | Some("uRGB") | Some("sRGB") | Some("nGry") | Some("uGry") | Some("sGry") => {
+            true
+        }
+        Some(desc) => desc.to_ascii_lowercase().contains("srgb"),
+        None => false,
     }
 }
 
@@ -316,25 +325,33 @@ fn read_jpeg(buffer: &[u8]) -> ReadResult {
             Ok(Image::from_rgb(data, width, height))
         }
         Ok(mozjpeg::decompress::Format::Gray(mut decompress)) => {
-            let mut data: Vec<GRAY8> = decompress
+            let data: Vec<GRAY8> = decompress
                 .read_scanlines()
                 .ok_or_else(|| "Failed decode image data".to_string())?;
             decompress.finish_decompress();
 
             if let Some(profile) = profile {
-                eprintln!("Transforming Gray to sRGB...");
-                let transform = lcms2::Transform::new(
-                    &profile,
-                    lcms2::PixelFormat::GRAY_8,
-                    &lcms2::Profile::new_srgb(),
-                    lcms2::PixelFormat::GRAY_8,
-                    lcms2::Intent::Perceptual,
-                )
-                .map_err(|err| err.to_string())?;
-                transform.transform_in_place(&mut data);
-            }
+                if !is_srgb(&profile) {
+                    eprintln!("Transforming Gray to sRGB...");
+                    let transform = lcms2::Transform::new(
+                        &profile,
+                        lcms2::PixelFormat::GRAY_8,
+                        &lcms2::Profile::new_srgb(),
+                        lcms2::PixelFormat::RGB_8,
+                        lcms2::Intent::Perceptual,
+                    )
+                    .map_err(|err| err.to_string())?;
 
-            Ok(Image::from_gray(data, width, height))
+                    let mut output = vec![RGB8::new(0, 0, 0); data.len()];
+                    transform.transform_pixels(&data, &mut output);
+
+                    Ok(Image::from_rgb(output, width, height))
+                } else {
+                    Ok(Image::from_gray(data, width, height))
+                }
+            } else {
+                Ok(Image::from_gray(data, width, height))
+            }
         }
         Ok(mozjpeg::decompress::Format::CMYK(mut decompress)) => {
             let profile = profile
@@ -402,10 +419,13 @@ fn compress_jpeg(
     }
 
     cinfo.start_compress();
-    // TODO: gray profile?
+    let profile = match image.color_space {
+        ColorSpace::Gray => GRAY_PROFILE,
+        _ => SRGB_PROFILE,
+    };
     cinfo.write_marker(
         mozjpeg::Marker::APP(2),
-        &[b"ICC_PROFILE\0\x01\x01", TINYSRGB].concat(),
+        &[b"ICC_PROFILE\0\x01\x01", profile].concat(),
     );
     if !match image.color_space {
         ColorSpace::Gray => cinfo.write_scanlines(image.to_gray().buf().as_bytes()),
@@ -707,8 +727,8 @@ fn compress_webp(image: &Image, quality: u8, lossless: bool) -> CompressResult {
         }
 
         let profile = WebPData {
-            bytes: TINYSRGB.as_ptr(),
-            size: TINYSRGB.len(),
+            bytes: SRGB_PROFILE.as_ptr(),
+            size: SRGB_PROFILE.len(),
         };
 
         let ret = WebPMuxSetChunk(

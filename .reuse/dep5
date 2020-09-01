@@ -21,7 +21,7 @@ Copyright: 2020 Tuomas Siipola
 License: CC0-1.0
 Comment: https://commons.wikimedia.org/wiki/File:Chicken_from_Venezuela.jpg
 
-Files: src/tinysrgb.icc
-Copyright: 2012 Facebook
+Files: profiles/*
+Copyright: 2019 Clinton Ingram
 License: CC0-1.0
-Comment: https://github.com/wikimedia/mediawiki/blob/0c0a60c87bfa40a189c220f995a501811f78d3f5/includes/media/tinyrgb.icc
+Comment: https://github.com/saucecontrol/Compact-ICC-Profiles/

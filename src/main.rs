@@ -15,6 +15,30 @@ use std::io::{Read, Write};
 use std::mem::{ManuallyDrop, MaybeUninit};
 use std::path::{Path, PathBuf};
 
+const SRGB_PROFILE: &[u8] = include_bytes!("../profiles/sRGB-v2-nano.icc");
+const GRAY_PROFILE: &[u8] = include_bytes!("../profiles/sGrey-v2-nano.icc");
+
+fn is_srgb(profile: &lcms2::Profile) -> bool {
+    match profile
+        .info(lcms2::InfoType::Description, lcms2::Locale::none())
+        .as_ref()
+        .map(String::as_str)
+    {
+        // TINYsRGB by Facebook
+        // (https://www.facebook.com/notes/facebook-engineering/under-the-hood-improving-facebook-photos/10150630639853920)
+        Some("c2") => true,
+        // sRGBz by Øyvind Kolås (https://pippin.gimp.org/sRGBz/)
+        Some("sRGBz") | Some("z") => true,
+        // Compact ICC Profiles by Clinton Ingram
+        // (https://github.com/saucecontrol/Compact-ICC-Profiles/)
+        Some("nRGB") | Some("uRGB") | Some("sRGB") | Some("nGry") | Some("uGry") | Some("sGry") => {
+            true
+        }
+        Some(desc) => desc.to_ascii_lowercase().contains("srgb"),
+        None => false,
+    }
+}
+
 #[derive(PartialEq)]
 enum ColorSpace {
     Gray,
@@ -80,6 +104,15 @@ impl Image {
         Self::from_rgba(data.iter().map(|c| c.alpha(255)).collect(), width, height)
     }
 
+    fn from_gray(data: Vec<GRAY8>, width: usize, height: usize) -> Self {
+        Self {
+            width,
+            height,
+            data: data.iter().map(|c| RGB8::from(*c).alpha(255)).collect(),
+            color_space: ColorSpace::Gray,
+        }
+    }
+
     fn to_rgbaplu(&self) -> ImgVec<RGBAPLU> {
         Img::new(self.data.to_rgbaplu(), self.width, self.height)
     }
@@ -109,14 +142,6 @@ impl Image {
                 .collect::<RGB8>()
                 .alpha(255);
         });
-    }
-
-    fn to_rgb(&self) -> ImgVec<RGB8> {
-        Img::new(
-            self.data.iter().map(|c| c.rgb()).collect(),
-            self.width,
-            self.height,
-        )
     }
 
     fn as_bytes(&self) -> &[u8] {
@@ -209,24 +234,159 @@ fn exif_orientation(exif: exif::Exif) -> Option<u32> {
         .filter(|x| *x >= 1 && *x <= 8)
 }
 
+// ICC profiles can be split into chunks and stored in multiple markers. Reconstruct the profile by
+// reading these markers and concatenating their data.
+fn jpeg_icc(dinfo: &mozjpeg::Decompress) -> Result<Option<Vec<u8>>, String> {
+    let mut markers = dinfo.markers();
+    let first_chunk = markers.find_map(|marker| match marker.data {
+        [b'I', b'C', b'C', b'_', b'P', b'R', b'O', b'F', b'I', b'L', b'E', b'\0', 1, total, data @ ..] => Some((*total, data.to_vec())),
+        _ => None
+    });
+    if let Some((total_chunks, mut buffer)) = first_chunk {
+        let mut chunks_read = 1;
+        for marker in markers {
+            if chunks_read == total_chunks {
+                break;
+            }
+            if let [b'I', b'C', b'C', b'_', b'P', b'R', b'O', b'F', b'I', b'L', b'E', b'\0', index, total, data @ ..] =
+                marker.data
+            {
+                chunks_read += 1;
+                if *index != chunks_read {
+                    return Err(format!(
+                        "Failed to read ICC profile: invalid index (expected {} found {})",
+                        chunks_read, index
+                    ));
+                }
+                if *total != total_chunks {
+                    return Err(format!("Failed to read ICC profile: different totals in two chunks (expected {} found {})", total_chunks, total));
+                }
+                buffer.extend_from_slice(data);
+            }
+        }
+        if chunks_read == total_chunks {
+            Ok(Some(buffer))
+        } else {
+            Err(format!(
+                "Failed to read ICC profile: {} chunks missing out of {} chunks",
+                total_chunks - chunks_read,
+                total_chunks
+            ))
+        }
+    } else {
+        Ok(None)
+    }
+}
+
 fn read_jpeg(buffer: &[u8]) -> ReadResult {
-    let dinfo = mozjpeg::Decompress::new_mem(buffer).map_err(|err| err.to_string())?;
-    let mut rgb = dinfo.rgb().map_err(|err| err.to_string())?;
-    let width = rgb.width();
-    let height = rgb.height();
-    let data: Vec<RGB8> = rgb
-        .read_scanlines()
-        .ok_or_else(|| "Failed decode image data".to_string())?;
-    rgb.finish_decompress();
+    let dinfo = mozjpeg::Decompress::with_markers(&[mozjpeg::Marker::APP(2)])
+        .from_mem(buffer)
+        .map_err(|err| err.to_string())?;
+
+    let profile = match jpeg_icc(&dinfo) {
+        Ok(Some(icc)) => match lcms2::Profile::new_icc(&icc) {
+            Ok(x) => Some(x),
+            Err(err) => {
+                eprintln!("Failed to read ICC profile: {}", err);
+                None
+            }
+        },
+        Ok(None) => None,
+        Err(err) => {
+            eprintln!("Failed to read ICC profile: {}", err);
+            None
+        }
+    };
+
+    let (width, height) = dinfo.size();
+
+    let image = match dinfo.image() {
+        Ok(mozjpeg::decompress::Format::RGB(mut decompress)) => {
+            let mut data: Vec<RGB8> = decompress
+                .read_scanlines()
+                .ok_or_else(|| "Failed decode image data".to_string())?;
+            decompress.finish_decompress();
+
+            if let Some(profile) = profile {
+                if !is_srgb(&profile) {
+                    eprintln!("Transforming RGB to sRGB...");
+                    let transform = lcms2::Transform::new(
+                        &profile,
+                        lcms2::PixelFormat::RGB_8,
+                        &lcms2::Profile::new_srgb(),
+                        lcms2::PixelFormat::RGB_8,
+                        lcms2::Intent::Perceptual,
+                    )
+                    .map_err(|err| err.to_string())?;
+                    transform.transform_in_place(&mut data);
+                }
+            }
+
+            Ok(Image::from_rgb(data, width, height))
+        }
+        Ok(mozjpeg::decompress::Format::Gray(mut decompress)) => {
+            let data: Vec<GRAY8> = decompress
+                .read_scanlines()
+                .ok_or_else(|| "Failed decode image data".to_string())?;
+            decompress.finish_decompress();
+
+            if let Some(profile) = profile {
+                if !is_srgb(&profile) {
+                    eprintln!("Transforming Gray to sRGB...");
+                    let transform = lcms2::Transform::new(
+                        &profile,
+                        lcms2::PixelFormat::GRAY_8,
+                        &lcms2::Profile::new_srgb(),
+                        lcms2::PixelFormat::RGB_8,
+                        lcms2::Intent::Perceptual,
+                    )
+                    .map_err(|err| err.to_string())?;
+
+                    let mut output = vec![RGB8::new(0, 0, 0); data.len()];
+                    transform.transform_pixels(&data, &mut output);
+
+                    Ok(Image::from_rgb(output, width, height))
+                } else {
+                    Ok(Image::from_gray(data, width, height))
+                }
+            } else {
+                Ok(Image::from_gray(data, width, height))
+            }
+        }
+        Ok(mozjpeg::decompress::Format::CMYK(mut decompress)) => {
+            let profile = profile
+                .ok_or_else(|| "Expected ICC profile for JPEG in CMYK color space".to_string())?;
+
+            let data: Vec<[u8; 4]> = decompress
+                .read_scanlines()
+                .ok_or_else(|| "Failed decode image data".to_string())?;
+            decompress.finish_decompress();
+
+            eprintln!("Transforming CMYK to sRGB...");
+            let transform = lcms2::Transform::new(
+                &profile,
+                lcms2::PixelFormat::CMYK_8_REV,
+                &lcms2::Profile::new_srgb(),
+                lcms2::PixelFormat::RGB_8,
+                lcms2::Intent::Perceptual,
+            )
+            .map_err(|err| err.to_string())?;
+
+            let mut output = vec![RGB8::new(0, 0, 0); data.len()];
+            transform.transform_pixels(&data, &mut output);
+
+            Ok(Image::from_rgb(output, width, height))
+        }
+        Err(err) => Err(format!("Failed decode image data: {}", err)),
+    }?;
+
     let orientation = exif::Reader::new()
         .read_from_container(&mut std::io::Cursor::new(buffer))
         .ok()
         .and_then(exif_orientation)
         .unwrap_or(1);
-    Ok(orient_image(
-        Image::from_rgb(data, width, height),
-        orientation,
-    ))
+
+    Ok(orient_image(image, orientation))
 }
 
 fn compress_jpeg(
@@ -236,7 +396,7 @@ fn compress_jpeg(
 ) -> CompressResult {
     let mut cinfo = mozjpeg::Compress::new(match image.color_space {
         ColorSpace::Gray => mozjpeg::ColorSpace::JCS_GRAYSCALE,
-        _ => mozjpeg::ColorSpace::JCS_RGB,
+        _ => mozjpeg::ColorSpace::JCS_EXT_RGBX,
     });
     cinfo.set_size(image.width, image.height);
     cinfo.set_quality(quality as f32);
@@ -259,17 +419,27 @@ fn compress_jpeg(
     }
 
     cinfo.start_compress();
+    let profile = match image.color_space {
+        ColorSpace::Gray => GRAY_PROFILE,
+        _ => SRGB_PROFILE,
+    };
+    cinfo.write_marker(
+        mozjpeg::Marker::APP(2),
+        &[b"ICC_PROFILE\0\x01\x01", profile].concat(),
+    );
     if !match image.color_space {
         ColorSpace::Gray => cinfo.write_scanlines(image.to_gray().buf().as_bytes()),
-        _ => cinfo.write_scanlines(image.to_rgb().buf().as_bytes()),
+        _ => cinfo.write_scanlines(image.as_bytes()),
     } {
         return Err("Failed to compress image data".to_string());
     }
     cinfo.finish_compress();
+
     let cdata = cinfo
         .data_to_vec()
         .map_err(|_err| "Failed to compress image".to_string())?;
     let image = read_jpeg(&cdata)?;
+
     Ok((image, cdata))
 }
 
@@ -277,17 +447,42 @@ fn read_png(buffer: &[u8]) -> ReadResult {
     let mut decoder = lodepng::Decoder::new();
     decoder.remember_unknown_chunks(true);
     decoder.info_raw_mut().colortype = lodepng::ColorType::RGBA;
-    let png = match decoder.decode(&buffer) {
+
+    let mut png = match decoder.decode(&buffer) {
         Ok(lodepng::Image::RGBA(data)) => data,
         Ok(_) => return Err("Color conversion failed".to_string()),
         Err(err) => return Err(err.to_string()),
     };
+
     let orientation = decoder
         .info_png()
         .get("eXIf")
         .and_then(|raw| exif::Reader::new().read_raw(raw.data().to_vec()).ok())
         .and_then(exif_orientation)
         .unwrap_or(1);
+
+    if let Ok(icc) = decoder.get_icc() {
+        eprintln!("transforming to srgb...");
+        match lcms2::Profile::new_icc(&icc) {
+            Ok(profile) => {
+                if !is_srgb(&profile) {
+                    let transform = lcms2::Transform::new(
+                        &profile,
+                        lcms2::PixelFormat::RGBA_8,
+                        &lcms2::Profile::new_srgb(),
+                        lcms2::PixelFormat::RGBA_8,
+                        lcms2::Intent::Perceptual,
+                    )
+                    .map_err(|err| err.to_string())?;
+                    transform.transform_in_place(&mut png.buffer);
+                }
+            }
+            Err(err) => {
+                eprintln!("Failed to read ICC profile: {}", err);
+            }
+        }
+    }
+
     Ok(orient_image(
         Image::from_rgba(png.buffer, png.width, png.height),
         orientation,
@@ -307,6 +502,41 @@ fn compress_png(image: &Image, quality: u8) -> CompressResult {
     };
     let buffer = {
         let mut encoder = lodepng::Encoder::new();
+
+        // `sRGB` chunk where 0x00 specifies perceptual rendering intent.
+        encoder
+            .info_png_mut()
+            .create_chunk(lodepng::ChunkPosition::IHDR, b"sRGB", b"\x00")
+            .map_err(|err| err.to_string())?;
+        // Recommended chunks from PNG 1.2 specification for compatibility with applications that
+        // do not support the `sRGB` chunk.
+        encoder
+            .info_png_mut()
+            .create_chunk(
+                lodepng::ChunkPosition::IHDR,
+                b"gAMA",
+                /* Gamma: 0. */ &45455u32.to_be_bytes(),
+            )
+            .map_err(|err| err.to_string())?;
+        encoder
+            .info_png_mut()
+            .create_chunk(
+                lodepng::ChunkPosition::IHDR,
+                b"cHRM",
+                &[
+                    /* White Point x: 0. */ 31270u32.to_be_bytes(),
+                    /* White Point y: 0. */ 32900u32.to_be_bytes(),
+                    /* Red x:         0. */ 64000u32.to_be_bytes(),
+                    /* Red y:         0. */ 33000u32.to_be_bytes(),
+                    /* Green x:       0. */ 30000u32.to_be_bytes(),
+                    /* Green y:       0. */ 60000u32.to_be_bytes(),
+                    /* Blue x:        0. */ 15000u32.to_be_bytes(),
+                    /* Blue y:        0.0 */ 6000u32.to_be_bytes(),
+                ]
+                .concat(),
+            )
+            .map_err(|err| err.to_string())?;
+
         for color in &palette {
             encoder
                 .info_raw_mut()
@@ -323,6 +553,7 @@ fn compress_png(image: &Image, quality: u8) -> CompressResult {
         encoder.info_png_mut().color.colortype = lodepng::ColorType::PALETTE;
         encoder.info_png_mut().color.set_bitdepth(8);
         encoder.set_auto_convert(false);
+
         encoder
             .encode(&pixels, image.width, image.height)
             .map_err(|err| err.to_string())?
@@ -362,6 +593,14 @@ fn read_webp(buffer: &[u8]) -> ReadResult {
             return Err("failed to decode image data".to_string());
         }
 
+        // XXX: Not safe because `buffer` is not allocated by `Vec`.
+        //      Probably fine because size is not changed :)
+        let mut buffer: Vec<RGBA8> = Vec::from_raw_parts(
+            rgba as *mut _,
+            (width * height) as usize,
+            (width * height) as usize,
+        );
+
         WebPDataClear(&mut image.bitstream);
 
         let mut exif_chunk = MaybeUninit::uninit();
@@ -381,15 +620,39 @@ fn read_webp(buffer: &[u8]) -> ReadResult {
         };
         let orientation = exif.and_then(exif_orientation).unwrap_or(1);
 
-        WebPMuxDelete(mux);
+        let mut icc = MaybeUninit::uninit();
+        let ret = WebPMuxGetChunk(mux, b"ICCP" as *const _ as *const _, icc.as_mut_ptr());
+        let icc_data = match ret {
+            WebPMuxError::WEBP_MUX_OK => {
+                let icc = icc.assume_init();
+                Some(std::slice::from_raw_parts(icc.bytes, icc.size))
+            }
+            WebPMuxError::WEBP_MUX_NOT_FOUND => None,
+            error => return Err(format!("{:?}", error)),
+        };
+        if let Some(icc) = icc_data {
+            eprintln!("transforming to srgb...");
+            match lcms2::Profile::new_icc(&icc) {
+                Ok(profile) => {
+                    if !is_srgb(&profile) {
+                        let transform = lcms2::Transform::new(
+                            &profile,
+                            lcms2::PixelFormat::RGBA_8,
+                            &lcms2::Profile::new_srgb(),
+                            lcms2::PixelFormat::RGBA_8,
+                            lcms2::Intent::Perceptual,
+                        )
+                        .map_err(|err| err.to_string())?;
+                        transform.transform_in_place(&mut buffer);
+                    }
+                }
+                Err(err) => {
+                    eprintln!("Failed to read ICC profile: {}", err);
+                }
+            }
+        }
 
-        // XXX: Not safe because `buffer` is not allocated by `Vec`.
-        //      Probably fine because size is not changed :)
-        let buffer: Vec<RGBA8> = Vec::from_raw_parts(
-            rgba as *mut _,
-            (width * height) as usize,
-            (width * height) as usize,
-        );
+        WebPMuxDelete(mux);
 
         Ok(orient_image(
             Image::from_rgba(buffer, width as usize, height as usize),
@@ -453,27 +716,60 @@ fn compress_webp(image: &Image, quality: u8, lossless: bool) -> CompressResult {
             return Err("Failed to encode image data".to_string());
         }
 
-        let buffer = wrt.mem;
-        let len = wrt.size;
+        let data = WebPData {
+            bytes: wrt.mem,
+            size: wrt.size,
+        };
+
+        let mux = WebPMuxCreateInternal(&data, 0, WEBP_MUX_ABI_VERSION);
+        if mux.is_null() {
+            return Err("failed to create mux".to_string());
+        }
+
+        let profile = WebPData {
+            bytes: SRGB_PROFILE.as_ptr(),
+            size: SRGB_PROFILE.len(),
+        };
+
+        let ret = WebPMuxSetChunk(
+            mux,
+            b"ICCP" as *const _ as *const _,
+            &profile as *const _,
+            0,
+        );
+        if ret != WebPMuxError::WEBP_MUX_OK {
+            return Err("failed set ICCP chunk".to_string());
+        }
+
+        let mut output = MaybeUninit::<WebPData>::uninit();
+        let ret = WebPMuxAssemble(mux, output.as_mut_ptr());
+        if ret != WebPMuxError::WEBP_MUX_OK {
+            return Err("failed to assemble".to_string());
+        }
+        let mut output = output.assume_init();
+
+        WebPMuxDelete(mux);
 
         let capacity = image.width * image.height;
         let mut pixels: Vec<RGBA8> = Vec::with_capacity(capacity);
         pixels.set_len(capacity);
 
         let ret = WebPDecodeRGBAInto(
-            buffer,
-            len,
+            output.bytes,
+            output.size,
             pixels.as_mut_ptr() as *mut u8,
             4 * image.width * image.height,
             (4 * image.width) as i32,
         );
         if ret.is_null() {
+            WebPDataClear(&mut output);
             return Err("Failed to decode image data".to_string());
         }
 
-        // XXX: Not safe because `buffer` is not allocated by `Vec`.
-        //      Probably fine because size is not changed :)
-        let buffer = Vec::from_raw_parts(buffer, len as usize, len as usize);
+        // XXX: unnecessary copy
+        let buffer = std::slice::from_raw_parts(output.bytes, output.size as usize).to_vec();
+
+        WebPDataClear(&mut output);
 
         Ok((Image::from_rgba(pixels, image.width, image.height), buffer))
     }

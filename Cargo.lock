@@ -479,6 +479,7 @@ dependencies = [
  "imagequant 2.12.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "imgref 1.6.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "kamadak-exif 0.5.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "lcms2 5.3.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "libwebp-sys 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "lodepng 3.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "mozjpeg 0.8.19 (registry+https://github.com/rust-lang/crates.io-index)",

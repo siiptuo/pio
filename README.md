@@ -21,9 +21,8 @@ It's designed primarily to optimize photographs for the web.
 - Powered by great projects like [mozjpeg](https://github.com/mozilla/mozjpeg) and [pngquant](https://pngquant.org/)
 - Easily installable statically-linked binary (for Linux and macOS)
 
-`pio` is under development but should be usable for most images.
-More testing and tweaking is still required.
-Feedback is welcome.
+`pio` is still under development but should be usable for most images.
+You can help by testing `pio` and giving feedback by [GitHub issues](https://github.com/siiptuo/pio/issues).
 
 ## Background
 

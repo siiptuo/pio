@@ -7,6 +7,7 @@ version = "0.4.0"
 authors = ["Tuomas Siipola <tuomas@zpl.fi>"]
 edition = "2018"
 license = "AGPL-3.0-or-later"
+default-run = "pio"
 
 [profile.release]
 lto = true

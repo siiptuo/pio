@@ -3,22 +3,15 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-mod common;
-mod jpeg;
-mod output;
-mod png;
-mod profile;
-mod ssim;
-mod webp;
-
 use std::fs::File;
 use std::io::Read;
 
 use clap::{App, Arg};
 use rgb::RGB8;
 
-use crate::common::{ChromaSubsampling, CompressResult, Format, Image};
-use crate::output::Output;
+use pio::common::{ChromaSubsampling, CompressResult, Format, Image};
+use pio::output::Output;
+use pio::{jpeg, png, ssim, webp};
 
 type LossyCompressor = Box<dyn Fn(&Image, u8) -> CompressResult>;
 type LosslessCompressor = Box<dyn Fn(&Image) -> CompressResult>;

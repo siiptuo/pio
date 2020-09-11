@@ -35,7 +35,7 @@ fn is_gray(color: RGB8) -> bool {
     distance(color.r, color.g) <= 1 && distance(color.g, color.b) <= 1
 }
 
-fn srgb_to_linear(u: u8) -> f32 {
+pub fn srgb_to_linear(u: u8) -> f32 {
     let u = u as f32 / 255.0;
     if u <= 0.04045 {
         u / 12.92
@@ -44,7 +44,7 @@ fn srgb_to_linear(u: u8) -> f32 {
     }
 }
 
-fn linear_to_srgb(u: f32) -> u8 {
+pub fn linear_to_srgb(u: f32) -> u8 {
     if u <= 0.0031308 {
         (255.0 * (12.92 * u)).round() as u8
     } else {

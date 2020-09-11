@@ -31,7 +31,7 @@ for i in {1..3}; do
     magick convert "$original" -resize 200x "$thumbnail"
 
     jpeg="images/image$i-jpeg.jpeg"
-    jpeg_quality=$(cargo run --release -- "$thumbnail" -o "$jpeg" 2>&1 | tail -n1 | cut -c 29-30)
+    jpeg_quality=$(cargo run --release -- "$thumbnail" --min 0 --max 100 -o "$jpeg" 2>&1 | tail -n1 | cut -c 29-30)
     jpeg_size=$(stat -c %s "$jpeg")
     jpeg_size=$(numfmt --to=iec-i --suffix=B "$jpeg_size" | sed 's/[^0-9.]/ &/')
     magick convert "$jpeg" "images/image$i-jpeg.png"
@@ -39,7 +39,7 @@ for i in {1..3}; do
     jpeg="images/image$i-jpeg.png"
 
     webp="images/image$i-webp.webp"
-    webp_quality=$(cargo run --release -- "$thumbnail" -o "$webp" 2>&1 | tail -n1 | cut -c 29-30)
+    webp_quality=$(cargo run --release -- "$thumbnail" --min 0 --max 100 -o "$webp" 2>&1 | tail -n2 | head -n1 | cut -c 29-30)
     webp_size=$(stat -c %s "$webp")
     webp_size=$(numfmt --to=iec-i --suffix=B "$webp_size" | sed 's/[^0-9.]/ &/')
     magick convert "$webp" "images/image$i-webp.png"

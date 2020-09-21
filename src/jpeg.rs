@@ -14,44 +14,36 @@ use crate::profile::{is_srgb, GRAY_PROFILE, SRGB_PROFILE};
 // ICC profiles can be split into chunks and stored in multiple markers. Reconstruct the profile by
 // reading these markers and concatenating their data.
 fn jpeg_icc(dinfo: &mozjpeg::Decompress) -> Result<Option<Vec<u8>>, String> {
-    let mut markers = dinfo.markers();
-    let first_chunk = markers.find_map(|marker| match marker.data {
-        [b'I', b'C', b'C', b'_', b'P', b'R', b'O', b'F', b'I', b'L', b'E', b'\0', 1, total, data @ ..] => Some((*total, data.to_vec())),
-        _ => None
-    });
-    if let Some((total_chunks, mut buffer)) = first_chunk {
-        let mut chunks_read = 1;
-        for marker in markers {
-            if chunks_read == total_chunks {
-                break;
+    let mut chunks = Vec::new();
+    let mut total = 0;
+    for marker in dinfo.markers() {
+        if marker.data.starts_with(b"ICC_PROFILE\0") && marker.data.len() > 14 {
+            chunks.push((marker.data[12], &marker.data[14..]));
+            if total > 0 && total != marker.data[13] {
+                return Err(format!(
+                    "Failed to read ICC profile: different totals in two chunks (expected {} found {})",
+                    total,
+                    marker.data[13]
+                ));
             }
-            if let [b'I', b'C', b'C', b'_', b'P', b'R', b'O', b'F', b'I', b'L', b'E', b'\0', index, total, data @ ..] =
-                marker.data
-            {
-                chunks_read += 1;
-                if *index != chunks_read {
-                    return Err(format!(
-                        "Failed to read ICC profile: invalid index (expected {} found {})",
-                        chunks_read, index
-                    ));
-                }
-                if *total != total_chunks {
-                    return Err(format!("Failed to read ICC profile: different totals in two chunks (expected {} found {})", total_chunks, total));
-                }
-                buffer.extend_from_slice(data);
-            }
+            total = marker.data[13];
         }
-        if chunks_read == total_chunks {
-            Ok(Some(buffer))
-        } else {
-            Err(format!(
-                "Failed to read ICC profile: {} chunks missing out of {} chunks",
-                total_chunks - chunks_read,
-                total_chunks
-            ))
-        }
-    } else {
+    }
+    if total as usize != chunks.len() {
+        Err(format!(
+            "Failed to read ICC profile: expected {} chunks, found {} chunks",
+            total,
+            chunks.len()
+        ))
+    } else if total == 0 {
         Ok(None)
+    } else {
+        chunks.sort_unstable_by_key(|(index, _data)| *index);
+        let mut buffer = Vec::new();
+        for (_index, data) in chunks {
+            buffer.extend_from_slice(data);
+        }
+        Ok(Some(buffer))
     }
 }
 

@@ -178,11 +178,18 @@ pub fn exif_orientation(exif: exif::Exif) -> Option<u32> {
         .filter(|x| *x >= 1 && *x <= 8)
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub enum ChromaSubsampling {
     _420,
     _422,
     _444,
+}
+
+#[derive(Copy, Clone)]
+pub enum ChromaSubsamplingOption {
+    None,
+    Auto,
+    Manual(ChromaSubsampling),
 }
 
 #[derive(PartialEq, Copy, Clone)]
@@ -223,6 +230,14 @@ impl Format {
             Self::JPEG => false,
             Self::PNG => true,
             Self::WEBP => true,
+        }
+    }
+
+    pub fn supports_chroma_subsampling(&self) -> bool {
+        match self {
+            Self::JPEG => true,
+            Self::PNG => false,
+            Self::WEBP => false,
         }
     }
 }

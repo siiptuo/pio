@@ -9,11 +9,11 @@ use std::io::Read;
 use clap::{App, Arg};
 use rgb::RGB8;
 
-use pio::common::{ChromaSubsampling, CompressResult, Format, Image};
+use pio::common::{ChromaSubsampling, ChromaSubsamplingOption, CompressResult, Format, Image};
 use pio::output::Output;
 use pio::{jpeg, png, ssim, webp};
 
-type LossyCompressor = Box<dyn Fn(&Image, u8) -> CompressResult>;
+type LossyCompressor = Box<dyn Fn(&Image, u8, ChromaSubsampling) -> CompressResult>;
 type LosslessCompressor = Box<dyn Fn(&Image) -> CompressResult>;
 
 #[rustfmt::skip]
@@ -44,67 +44,93 @@ fn compress_image(
     min_quality: u8,
     max_quality: u8,
     original_size: u64,
+    chroma_subsampling: ChromaSubsamplingOption,
 ) -> Result<Vec<u8>, String> {
     let attr = ssim::Calculator::new(&image)
         .ok_or_else(|| "Failed to calculate SSIM image".to_string())?;
 
-    let mut min = min_quality;
-    let mut max = max_quality;
-    let mut compressed;
-    let mut buffer;
+    let mut best_buffer: Option<Vec<u8>> = None;
+    let mut best_dssim = 0.0;
 
-    // Compress image with different qualities and find which is closest to the SSIM target. Binary
-    // search is used to speed up the search. Since there are 101 possible quality values, only
-    // ceil(log2(101)) = 7 comparisons are needed at maximum.
-    loop {
-        // Overflow is not possible because `min` and `max` are in range 0-100.
-        let quality = (min + max) / 2;
+    let samplings = match chroma_subsampling {
+        ChromaSubsamplingOption::Auto => vec![
+            ChromaSubsampling::_444,
+            ChromaSubsampling::_422,
+            ChromaSubsampling::_420,
+        ],
+        ChromaSubsamplingOption::Manual(sampling) => vec![sampling],
+        ChromaSubsamplingOption::None => vec![ChromaSubsampling::_444],
+    };
 
-        let (a, b) = lossy_compress(&image, quality)?;
-        compressed = a;
-        buffer = b;
+    for sampling in samplings {
+        eprintln!("chroma subsampling: {:?}", sampling);
 
-        for x in 0..=100 / 4 {
-            if x == quality / 4 {
-                eprint!("O")
-            } else if x == 0 || x == 100 / 4 {
-                eprint!("|");
-            } else if x == min / 4 {
-                eprint!("[");
-            } else if x == max / 4 {
-                eprint!("]");
-            } else if x > min / 4 && x < max / 4 {
-                eprint!("-");
-            } else {
-                eprint!(" ");
+        let mut min = min_quality;
+        let mut max = max_quality;
+        let mut compressed;
+        let mut buffer;
+        let mut dssim;
+
+        // Compress image with different qualities and find which is closest to the SSIM target. Binary
+        // search is used to speed up the search. Since there are 101 possible quality values, only
+        // ceil(log2(101)) = 7 comparisons are needed at maximum.
+        loop {
+            // Overflow is not possible because `min` and `max` are in range 0-100.
+            let quality = (min + max) / 2;
+
+            let (a, b) = lossy_compress(&image, quality, sampling)?;
+            compressed = a;
+            buffer = b;
+
+            for x in 0..=100 / 4 {
+                if x == quality / 4 {
+                    eprint!("O")
+                } else if x == 0 || x == 100 / 4 {
+                    eprint!("|");
+                } else if x == min / 4 {
+                    eprint!("[");
+                } else if x == max / 4 {
+                    eprint!("]");
+                } else if x > min / 4 && x < max / 4 {
+                    eprint!("-");
+                } else {
+                    eprint!(" ");
+                }
             }
-        }
 
-        let dssim = attr
-            .compare(&compressed)
-            .ok_or_else(|| "Failed to calculate SSIM image".to_string())?;
+            dssim = attr
+                .compare(&compressed)
+                .ok_or_else(|| "Failed to calculate SSIM image".to_string())?;
 
-        eprintln!(
-            " {:>3} quality  {:.6} SSIM  {:>3} % of original",
-            quality,
-            dssim,
-            100 * buffer.len() as u64 / original_size
-        );
+            eprintln!(
+                " {:>3} quality  {:.6} SSIM  {:>3} % of original",
+                quality,
+                dssim,
+                100 * buffer.len() as u64 / original_size,
+            );
 
-        if dssim > target {
-            min = quality + 1;
-        } else {
-            // Prevent underflow because comparison is unreliable at low qualities.
-            if quality == 0 {
+            if dssim > target {
+                min = quality + 1;
+            } else {
+                // Prevent underflow because comparison is unreliable at low qualities.
+                if quality == 0 {
+                    break;
+                }
+                max = quality - 1;
+            }
+
+            if min > max {
                 break;
             }
-            max = quality - 1;
         }
 
-        if min > max {
-            break;
+        if best_buffer.is_none() || (dssim - target).abs() < (best_dssim - target).abs() {
+            best_buffer = Some(buffer);
+            best_dssim = dssim;
         }
     }
+
+    let best_buffer = best_buffer.unwrap();
 
     // Try lossless compression if the format supports it. For example, lossless WebP can sometimes
     // be smaller than lossy WebP for non-photographic images.
@@ -115,12 +141,12 @@ fn compress_image(
             "    lossless  0.000000 SSIM  {:>3} % of original",
             100 * b.len() as u64 / original_size
         );
-        if b.len() < buffer.len() {
+        if b.len() < best_buffer.len() {
             return Ok(b);
         }
     }
 
-    Ok(buffer)
+    Ok(best_buffer)
 }
 
 fn validate_quality(x: String) -> Result<(), String> {
@@ -184,13 +210,6 @@ fn pio(matches: clap::ArgMatches) -> Result<(), String> {
 
     let fail_strategy = matches.value_of("optimization-failed").unwrap();
 
-    let chroma_subsampling = match matches.value_of("chroma-subsampling").unwrap() {
-        "420" => ChromaSubsampling::_420,
-        "422" => ChromaSubsampling::_422,
-        "444" => ChromaSubsampling::_444,
-        _ => unreachable!(),
-    };
-
     let (input_format, input_buffer) = {
         let mut reader: Box<dyn std::io::Read> = match matches.value_of_os("INPUT") {
             None => {
@@ -250,6 +269,18 @@ fn pio(matches: clap::ArgMatches) -> Result<(), String> {
         }
     };
 
+    let chroma_subsampling = if output_format.supports_chroma_subsampling() {
+        match matches.value_of("chroma-subsampling").unwrap() {
+            "420" => ChromaSubsamplingOption::Manual(ChromaSubsampling::_420),
+            "422" => ChromaSubsamplingOption::Manual(ChromaSubsampling::_422),
+            "444" => ChromaSubsamplingOption::Manual(ChromaSubsampling::_444),
+            "auto" => ChromaSubsamplingOption::Auto,
+            _ => unreachable!(),
+        }
+    } else {
+        ChromaSubsamplingOption::None
+    };
+
     let original_size = input_buffer.len();
 
     let mut input_image = match input_format {
@@ -261,13 +292,10 @@ fn pio(matches: clap::ArgMatches) -> Result<(), String> {
 
     let (lossy_compress, lossless_compress): (LossyCompressor, Option<LosslessCompressor>) =
         match output_format {
-            Format::JPEG => (
-                Box::new(move |img, q| jpeg::compress(img, q, chroma_subsampling)),
-                None,
-            ),
-            Format::PNG => (Box::new(png::compress), None),
+            Format::JPEG => (Box::new(jpeg::compress), None),
+            Format::PNG => (Box::new(|img, q, _cs| png::compress(img, q)), None),
             Format::WEBP => (
-                Box::new(|img, q| webp::compress(img, q, false)),
+                Box::new(|img, q, _cs| webp::compress(img, q, false)),
                 Some(Box::new(|img| webp::compress(img, 100, true))),
             ),
         };
@@ -285,6 +313,7 @@ fn pio(matches: clap::ArgMatches) -> Result<(), String> {
         min,
         max,
         original_size as u64,
+        chroma_subsampling,
     ) {
         Ok(output_buffer) => {
             if output_buffer.len() <= original_size as usize {
@@ -415,8 +444,8 @@ fn main() {
                 .value_name("xxx")
                 .help("Specifies chroma subsampling")
                 .takes_value(true)
-                .default_value("420")
-                .possible_values(&["444", "422", "420"]),
+                .default_value("auto")
+                .possible_values(&["444", "422", "420", "auto"]),
         )
         .get_matches();
 
@@ -460,6 +489,19 @@ mod tests {
             .output()?;
         let psnr: f32 = String::from_utf8(output.stderr)?.parse()?;
         assert!(psnr > 30.0);
+        Ok(())
+    }
+
+    fn assert_image_subsampling(
+        image: impl AsRef<Path>,
+        sampling_factor: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new("identify")
+            .arg("-verbose")
+            .arg(image.as_ref())
+            .output()?;
+        let stdout = std::str::from_utf8(&output.stdout)?;
+        assert!(stdout.contains(&format!("jpeg:sampling-factor: {}", sampling_factor)));
         Ok(())
     }
 
@@ -555,6 +597,34 @@ mod tests {
         ])
         .assert()
         .success();
+        Ok(())
+    }
+
+    #[test]
+    fn auto_ssim_420() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempdir()?;
+        let output = dir.path().join("output.jpg");
+        let mut cmd = Command::cargo_bin("pio")?;
+        cmd.arg("-o")
+            .arg(&output)
+            .arg("images/biandintz-eta-zaldiak.png")
+            .assert()
+            .success();
+        assert_image_subsampling(output, "2x2,1x1,1x1")?;
+        Ok(())
+    }
+
+    #[test]
+    fn auto_ssim_422() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempdir()?;
+        let output = dir.path().join("output.jpg");
+        let mut cmd = Command::cargo_bin("pio")?;
+        cmd.arg("-o")
+            .arg(&output)
+            .arg("images/gluhlampe-explodiert.png")
+            .assert()
+            .success();
+        assert_image_subsampling(output, "2x1,1x1,1x1")?;
         Ok(())
     }
 }

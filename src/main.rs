@@ -627,4 +627,18 @@ mod tests {
         assert_image_subsampling(output, "2x1,1x1,1x1")?;
         Ok(())
     }
+
+    #[test]
+    fn auto_ssim_444() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempdir()?;
+        let output = dir.path().join("output.jpg");
+        let mut cmd = Command::cargo_bin("pio")?;
+        cmd.arg("-o")
+            .arg(&output)
+            .arg("images/image-subsampling-test.png")
+            .assert()
+            .success();
+        assert_image_subsampling(output, "1x1,1x1,1x1")?;
+        Ok(())
+    }
 }

@@ -48,8 +48,8 @@ fn find_image(
 ) -> Result<(f64, Vec<u8>), String> {
     let mut min = min_quality;
     let mut max = max_quality;
-    let mut best_buffer;
-    let mut best_dssim;
+    let mut best_buffer = Vec::new();
+    let mut best_dssim = f64::INFINITY;
 
     // Compress image with different qualities and find which is closest to the SSIM target. Binary
     // search is used to speed up the search. Since there are 101 possible quality values, only
@@ -87,9 +87,15 @@ fn find_image(
             100 * buffer.len() as u64 / original_size,
         );
 
-        best_buffer = buffer;
-        best_dssim = dssim;
+        // Last steps of the binary search are pretty close to each other, so the final step may
+        // not actually have SSIM closest to the target. Instead of using the last step, keep track
+        // of the best attempt so far.
+        if (dssim - target).abs() < (best_dssim - target).abs() {
+            best_buffer = buffer;
+            best_dssim = dssim;
+        }
 
+        // Binary search step.
         if dssim > target {
             min = quality + 1;
         } else {

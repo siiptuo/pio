@@ -36,6 +36,78 @@ const QUALITY_SSIM: [f64; 101] = [
     0.0009805, 0.000749, 0.000548, 0.0004,
 ];
 
+fn find_image(
+    image: &Image,
+    attr: &ssim::Calculator,
+    lossy_compress: &LossyCompressor,
+    target: f64,
+    min_quality: u8,
+    max_quality: u8,
+    original_size: u64,
+    chroma_subsampling: ChromaSubsampling,
+) -> Result<(f64, Vec<u8>), String> {
+    let mut min = min_quality;
+    let mut max = max_quality;
+    let mut best_buffer;
+    let mut best_dssim;
+
+    // Compress image with different qualities and find which is closest to the SSIM target. Binary
+    // search is used to speed up the search. Since there are 101 possible quality values, only
+    // ceil(log2(101)) = 7 comparisons are needed at maximum.
+    loop {
+        // Overflow is not possible because `min` and `max` are in range 0-100.
+        let quality = (min + max) / 2;
+
+        let (compressed, buffer) = lossy_compress(image, quality, chroma_subsampling)?;
+
+        for x in 0..=100 / 4 {
+            if x == quality / 4 {
+                eprint!("O")
+            } else if x == 0 || x == 100 / 4 {
+                eprint!("|");
+            } else if x == min / 4 {
+                eprint!("[");
+            } else if x == max / 4 {
+                eprint!("]");
+            } else if x > min / 4 && x < max / 4 {
+                eprint!("-");
+            } else {
+                eprint!(" ");
+            }
+        }
+
+        let dssim = attr
+            .compare(&compressed)
+            .ok_or_else(|| "Failed to calculate SSIM image".to_string())?;
+
+        eprintln!(
+            " {:>3} quality  {:.6} SSIM  {:>3} % of original",
+            quality,
+            dssim,
+            100 * buffer.len() as u64 / original_size,
+        );
+
+        best_buffer = buffer;
+        best_dssim = dssim;
+
+        if dssim > target {
+            min = quality + 1;
+        } else {
+            // Prevent underflow because comparison is unreliable at low qualities.
+            if quality == 0 {
+                break;
+            }
+            max = quality - 1;
+        }
+
+        if min > max {
+            break;
+        }
+    }
+
+    Ok((best_dssim, best_buffer))
+}
+
 fn compress_image(
     image: Image,
     lossy_compress: LossyCompressor,
@@ -49,8 +121,8 @@ fn compress_image(
     let attr = ssim::Calculator::new(&image)
         .ok_or_else(|| "Failed to calculate SSIM image".to_string())?;
 
-    let mut best_buffer: Option<Vec<u8>> = None;
-    let mut best_dssim = 0.0;
+    let mut best_buffer = Vec::new();
+    let mut best_dssim = f64::INFINITY;
 
     let samplings = match chroma_subsampling {
         ChromaSubsamplingOption::Auto => vec![
@@ -64,73 +136,21 @@ fn compress_image(
 
     for sampling in samplings {
         eprintln!("chroma subsampling: {:?}", sampling);
-
-        let mut min = min_quality;
-        let mut max = max_quality;
-        let mut compressed;
-        let mut buffer;
-        let mut dssim;
-
-        // Compress image with different qualities and find which is closest to the SSIM target. Binary
-        // search is used to speed up the search. Since there are 101 possible quality values, only
-        // ceil(log2(101)) = 7 comparisons are needed at maximum.
-        loop {
-            // Overflow is not possible because `min` and `max` are in range 0-100.
-            let quality = (min + max) / 2;
-
-            let (a, b) = lossy_compress(&image, quality, sampling)?;
-            compressed = a;
-            buffer = b;
-
-            for x in 0..=100 / 4 {
-                if x == quality / 4 {
-                    eprint!("O")
-                } else if x == 0 || x == 100 / 4 {
-                    eprint!("|");
-                } else if x == min / 4 {
-                    eprint!("[");
-                } else if x == max / 4 {
-                    eprint!("]");
-                } else if x > min / 4 && x < max / 4 {
-                    eprint!("-");
-                } else {
-                    eprint!(" ");
-                }
-            }
-
-            dssim = attr
-                .compare(&compressed)
-                .ok_or_else(|| "Failed to calculate SSIM image".to_string())?;
-
-            eprintln!(
-                " {:>3} quality  {:.6} SSIM  {:>3} % of original",
-                quality,
-                dssim,
-                100 * buffer.len() as u64 / original_size,
-            );
-
-            if dssim > target {
-                min = quality + 1;
-            } else {
-                // Prevent underflow because comparison is unreliable at low qualities.
-                if quality == 0 {
-                    break;
-                }
-                max = quality - 1;
-            }
-
-            if min > max {
-                break;
-            }
-        }
-
-        if best_buffer.is_none() || (dssim - target).abs() < (best_dssim - target).abs() {
-            best_buffer = Some(buffer);
+        let (dssim, buffer) = find_image(
+            &image,
+            &attr,
+            &lossy_compress,
+            target,
+            min_quality,
+            max_quality,
+            original_size,
+            sampling,
+        )?;
+        if (dssim - target).abs() < (best_dssim - target).abs() {
+            best_buffer = buffer;
             best_dssim = dssim;
         }
     }
-
-    let best_buffer = best_buffer.unwrap();
 
     // Try lossless compression if the format supports it. For example, lossless WebP can sometimes
     // be smaller than lossy WebP for non-photographic images.

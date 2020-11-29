@@ -462,18 +462,14 @@ mod tests {
     use assert_cmd::Command;
     use tempfile::tempdir;
 
-    fn convert_image(
-        input: impl AsRef<Path>,
-        output: impl AsRef<Path>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let output = Command::new("convert")
+    fn convert_image(input: impl AsRef<Path>, output: impl AsRef<Path>) {
+        Command::new("convert")
             .arg(input.as_ref())
             .arg("-quality")
             .arg("100")
             .arg(output.as_ref())
-            .output()?;
-        assert!(output.status.success());
-        Ok(())
+            .assert()
+            .success();
     }
 
     fn assert_image_similarity(
@@ -492,25 +488,22 @@ mod tests {
         Ok(())
     }
 
-    fn assert_image_subsampling(
-        image: impl AsRef<Path>,
-        sampling_factor: &str,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let output = Command::new("identify")
-            .arg("-verbose")
+    fn assert_jpeg_sampling_factors(image: impl AsRef<Path>, sampling_factors: &'static str) {
+        Command::new("identify")
+            .arg("-format")
+            .arg("%[jpeg:sampling-factor]")
             .arg(image.as_ref())
-            .output()?;
-        let stdout = std::str::from_utf8(&output.stdout)?;
-        assert!(stdout.contains(&format!("jpeg:sampling-factor: {}", sampling_factor)));
-        Ok(())
+            .assert()
+            .success()
+            .stdout(sampling_factors);
     }
 
     #[test]
     fn fails_with_no_arguments() -> Result<(), Box<dyn std::error::Error>> {
-        let mut cmd = Command::cargo_bin("pio")?;
-        cmd.assert().failure().stderr(
-            "reading from standard input, use `--output` to write to a file or `--output-format` to write to standard output\n",
-        );
+        Command::cargo_bin("pio")?
+            .assert()
+            .failure()
+            .stderr("reading from standard input, use `--output` to write to a file or `--output-format` to write to standard output\n");
         Ok(())
     }
 
@@ -518,10 +511,14 @@ mod tests {
     fn reads_jpeg() -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempdir()?;
         let input = dir.path().join("input.jpeg");
-        convert_image("images/image1-original.png", &input)?;
+        convert_image("images/image1-original.png", &input);
         let output = dir.path().join("output.jpeg");
-        let mut cmd = Command::cargo_bin("pio")?;
-        cmd.arg(&input).arg("-o").arg(&output).assert().success();
+        Command::cargo_bin("pio")?
+            .arg(&input)
+            .arg("-o")
+            .arg(&output)
+            .assert()
+            .success();
         assert_image_similarity(input, output)?;
         Ok(())
     }
@@ -531,8 +528,12 @@ mod tests {
         let dir = tempdir()?;
         let input = "images/image1-original.png";
         let output = dir.path().join("output.jpeg");
-        let mut cmd = Command::cargo_bin("pio")?;
-        cmd.arg(input).arg("-o").arg(&output).assert().success();
+        Command::cargo_bin("pio")?
+            .arg(input)
+            .arg("-o")
+            .arg(&output)
+            .assert()
+            .success();
         assert_image_similarity(input, output)?;
         Ok(())
     }
@@ -541,10 +542,14 @@ mod tests {
     fn reads_webp() -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempdir()?;
         let input = dir.path().join("input.webp");
-        convert_image("images/image1-original.png", &input)?;
+        convert_image("images/image1-original.png", &input);
         let output = dir.path().join("output.jpeg");
-        let mut cmd = Command::cargo_bin("pio")?;
-        cmd.arg(&input).arg("-o").arg(&output).assert().success();
+        Command::cargo_bin("pio")?
+            .arg(&input)
+            .arg("-o")
+            .arg(&output)
+            .assert()
+            .success();
         assert_image_similarity(input, output)?;
         Ok(())
     }
@@ -554,8 +559,12 @@ mod tests {
         let dir = tempdir()?;
         let input = "images/image1-original.png";
         let output = dir.path().join("output.webp");
-        let mut cmd = Command::cargo_bin("pio")?;
-        cmd.arg(input).arg("-o").arg(&output).assert().success();
+        Command::cargo_bin("pio")?
+            .arg(input)
+            .arg("-o")
+            .arg(&output)
+            .assert()
+            .success();
         assert_image_similarity(input, output)?;
         Ok(())
     }
@@ -565,8 +574,12 @@ mod tests {
         let dir = tempdir()?;
         let input = "images/image1-original.png";
         let output = dir.path().join("output.png");
-        let mut cmd = Command::cargo_bin("pio")?;
-        cmd.arg(input).arg("-o").arg(&output).assert().success();
+        Command::cargo_bin("pio")?
+            .arg(input)
+            .arg("-o")
+            .arg(&output)
+            .assert()
+            .success();
         assert_image_similarity(input, output)?;
         Ok(())
     }
@@ -575,8 +588,8 @@ mod tests {
     fn does_not_create_empty_output_on_invalid_input() -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempdir()?;
         let output = dir.path().join("output.png");
-        let mut cmd = Command::cargo_bin("pio")?;
-        cmd.arg("-o")
+        Command::cargo_bin("pio")?
+            .arg("-o")
             .arg(&output)
             .write_stdin("RIFF....WEBP....")
             .assert()
@@ -587,58 +600,56 @@ mod tests {
 
     #[test]
     fn outputs_to_special_files() -> Result<(), Box<dyn std::error::Error>> {
-        let mut cmd = Command::cargo_bin("pio")?;
-        cmd.args(&[
-            "images/image1-original.png",
-            "-o",
-            "/dev/null",
-            "--output-format",
-            "jpeg",
-        ])
-        .assert()
-        .success();
+        Command::cargo_bin("pio")?
+            .arg("images/image1-original.png")
+            .arg("-o")
+            .arg("/dev/null")
+            .arg("--output-format")
+            .arg("jpeg")
+            .assert()
+            .success();
         Ok(())
     }
 
     #[test]
-    fn auto_ssim_420() -> Result<(), Box<dyn std::error::Error>> {
+    fn uses_420_chroma_subsampling_automatically() -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempdir()?;
         let output = dir.path().join("output.jpg");
-        let mut cmd = Command::cargo_bin("pio")?;
-        cmd.arg("-o")
+        Command::cargo_bin("pio")?
+            .arg("-o")
             .arg(&output)
             .arg("images/biandintz-eta-zaldiak.png")
             .assert()
             .success();
-        assert_image_subsampling(output, "2x2,1x1,1x1")?;
+        assert_jpeg_sampling_factors(output, "2x2,1x1,1x1");
         Ok(())
     }
 
     #[test]
-    fn auto_ssim_422() -> Result<(), Box<dyn std::error::Error>> {
+    fn uses_422_chroma_subsampling_automatically() -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempdir()?;
         let output = dir.path().join("output.jpg");
-        let mut cmd = Command::cargo_bin("pio")?;
-        cmd.arg("-o")
+        Command::cargo_bin("pio")?
+            .arg("-o")
             .arg(&output)
             .arg("images/gluhlampe-explodiert.png")
             .assert()
             .success();
-        assert_image_subsampling(output, "2x1,1x1,1x1")?;
+        assert_jpeg_sampling_factors(output, "2x1,1x1,1x1");
         Ok(())
     }
 
     #[test]
-    fn auto_ssim_444() -> Result<(), Box<dyn std::error::Error>> {
+    fn uses_444_chroma_subsampling_automatically() -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempdir()?;
         let output = dir.path().join("output.jpg");
-        let mut cmd = Command::cargo_bin("pio")?;
-        cmd.arg("-o")
+        Command::cargo_bin("pio")?
+            .arg("-o")
             .arg(&output)
             .arg("images/image-subsampling-test.png")
             .assert()
             .success();
-        assert_image_subsampling(output, "1x1,1x1,1x1")?;
+        assert_jpeg_sampling_factors(output, "1x1,1x1,1x1");
         Ok(())
     }
 }

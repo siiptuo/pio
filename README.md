@@ -165,4 +165,10 @@ If you need, you can override this automatic calculation by specifying `--min` a
 
 ## License
 
-GNU Affero General Public License version 3 or later
+License information is provided according to the [REUSE specification](https://reuse.software/spec/).
+In summary:
+
+- `pio` source code is available under AGPL-3.0-or-later.
+- Other files are licensed under various Creative Commons licenses.
+
+For more accurate information, check the individual files and [`.reuse/dep5`](.reuse/dep5).

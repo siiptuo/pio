@@ -4,6 +4,7 @@
 use std::ffi::OsStr;
 use std::path::Path;
 
+use clap::ArgEnum;
 use dssim::{ToRGBAPLU, RGBAPLU};
 use imgref::{Img, ImgVec};
 use rgb::{alt::GRAY8, ComponentBytes, RGB8, RGBA8};
@@ -192,7 +193,7 @@ pub enum ChromaSubsamplingOption {
     Manual(ChromaSubsampling),
 }
 
-#[derive(PartialEq, Copy, Clone)]
+#[derive(PartialEq, Copy, Clone, ArgEnum)]
 pub enum Format {
     JPEG,
     PNG,

@@ -262,10 +262,12 @@ fn compress_image(
 fn pio(args: Args) -> Result<(), String> {
     let target = QUALITY_SSIM[args.quality as usize];
 
-    let min = args.min.unwrap_or(args.quality.saturating_sub(args.spread));
+    let min = args
+        .min
+        .unwrap_or_else(|| args.quality.saturating_sub(args.spread));
     let max = args
         .max
-        .unwrap_or(std::cmp::min(args.quality + args.spread, 100));
+        .unwrap_or_else(|| std::cmp::min(args.quality + args.spread, 100));
     if min > max {
         return Err("value of `--min` must be less or equal to value of `--max`".to_string());
     }
@@ -307,7 +309,7 @@ fn pio(args: Args) -> Result<(), String> {
     } else {
         match &args.output {
             Some(path) => {
-                let format = args.output_format.or(Format::from_path(path)).ok_or_else(|| {
+                let format = args.output_format.or_else(|| Format::from_path(path)).ok_or_else(|| {
                     "failed to determine output format: either use a known file extension (jpeg, png or webp) or specify the format using `--output-format`".to_string()
                 })?;
                 let output = Output::write_file(path)

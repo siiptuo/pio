@@ -78,7 +78,7 @@ pub fn read(buffer: &[u8]) -> ReadResult {
         };
         if let Some(icc) = icc_data {
             eprintln!("transforming to srgb...");
-            match lcms2::Profile::new_icc(&icc) {
+            match lcms2::Profile::new_icc(icc) {
                 Ok(profile) => {
                     if !is_srgb(&profile) {
                         let transform = lcms2::Transform::new(
@@ -197,8 +197,7 @@ pub fn compress(image: &Image, quality: u8, lossless: bool) -> CompressResult {
         WebPMuxDelete(mux);
 
         let capacity = image.width * image.height;
-        let mut pixels: Vec<RGBA8> = Vec::with_capacity(capacity);
-        pixels.set_len(capacity);
+        let mut pixels = vec![RGBA8::new(0, 0, 0, 0); capacity];
 
         let ret = WebPDecodeRGBAInto(
             output.bytes,

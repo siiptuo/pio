@@ -34,12 +34,14 @@ fn random_file(root: impl AsRef<Path>) -> std::io::Result<(PathBuf, File)> {
     use rand::{thread_rng, Rng};
     use std::fs::OpenOptions;
 
-    let rng = thread_rng();
-
     loop {
         let path = root.as_ref().with_file_name(format!(
             ".pio-{}.tmp",
-            rng.sample_iter(&Alphanumeric).take(16).collect::<String>()
+            thread_rng()
+                .sample_iter(&Alphanumeric)
+                .take(16)
+                .map(char::from)
+                .collect::<String>()
         ));
         match OpenOptions::new().write(true).create_new(true).open(&path) {
             Ok(file) => break Ok((path, file)),

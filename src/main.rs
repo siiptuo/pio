@@ -562,23 +562,22 @@ mod tests {
         Ok(())
     }
 
-    // Broke after updating to dssim 2.11.5
-    // #[test]
-    // fn uses_420_chroma_subsampling_automatically() -> Result<(), Box<dyn std::error::Error>> {
-    //     let dir = tempdir()?;
-    //     let output = dir.path().join("output.jpg");
-    //     Command::cargo_bin("pio")?
-    //         .arg("-o")
-    //         .arg(&output)
-    //         .arg("images/biandintz-eta-zaldiak.png")
-    //         .assert()
-    //         .success();
-    //     assert_jpeg_sampling_factors(output, "2x2,1x1,1x1");
-    //     Ok(())
-    // }
+    #[test]
+    fn uses_420_chroma_subsampling_automatically() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempdir()?;
+        let output = dir.path().join("output.jpg");
+        Command::cargo_bin("pio")?
+            .arg("-o")
+            .arg(&output)
+            .arg("images/biandintz-eta-zaldiak.png")
+            .assert()
+            .success();
+        assert_jpeg_sampling_factors(output, "2x2,1x1,1x1");
+        Ok(())
+    }
 
     #[test]
-    fn uses_422_chroma_subsampling_automatically() -> Result<(), Box<dyn std::error::Error>> {
+    fn uses_420_chroma_subsampling_automatically2() -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempdir()?;
         let output = dir.path().join("output.jpg");
         Command::cargo_bin("pio")?
@@ -587,7 +586,7 @@ mod tests {
             .arg("images/gluhlampe-explodiert.png")
             .assert()
             .success();
-        assert_jpeg_sampling_factors(output, "2x1,1x1,1x1");
+        assert_jpeg_sampling_factors(output, "2x2,1x1,1x1");
         Ok(())
     }
 

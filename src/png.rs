@@ -53,12 +53,12 @@ pub fn read(buffer: &[u8]) -> ReadResult {
 pub fn compress(image: &Image, quality: u8) -> CompressResult {
     let (palette, pixels) = {
         let mut liq = imagequant::new();
-        liq.set_quality(0, quality as u32);
+        liq.set_quality(0, quality).unwrap();
         let img = &mut (liq
-            .new_image(&image.data, image.width, image.height, 0.0)
+            .new_image(&*image.data, image.width, image.height, 0.0)
             .map_err(|err| err.to_string())?);
-        let mut res = liq.quantize(&img).map_err(|err| err.to_string())?;
-        res.set_dithering_level(1.0);
+        let mut res = liq.quantize(img).map_err(|err| err.to_string())?;
+        res.set_dithering_level(1.0).unwrap();
         res.remapped(img).map_err(|err| err.to_string())?
     };
     let buffer = {

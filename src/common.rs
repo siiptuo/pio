@@ -5,7 +5,7 @@ use std::ffi::OsStr;
 use std::path::Path;
 
 use clap::ArgEnum;
-use dssim::{ToRGBAPLU, RGBAPLU};
+use dssim_core::{ToRGBAPLU, RGBAPLU};
 use imgref::{Img, ImgVec};
 use rgb::{alt::GRAY8, ComponentBytes, RGB8, RGBA8};
 

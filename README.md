@@ -87,13 +87,13 @@ Run `cargo build --release` to build binary at `target/release/pio`.
 Basic usage:
 
 ```sh
-$ pio input.jpeg --output output.jpeg
+pio input.jpeg --output output.jpeg
 ```
 
 The target quality can be set using `--quality` option:
 
 ```sh
-$ pio input.jpeg --quality 95 --output output.jpeg
+pio input.jpeg --quality 95 --output output.jpeg
 ```
 
 The target quality is a value between 0 and 100 and roughly corresponds to JPEG quality values.
@@ -113,8 +113,8 @@ Only after this, optimize the resized image with `pio`.
 For example with the help of [ImageMagick](https://imagemagick.org/index.php) you could resize and optimize an image:
 
 ```sh
-$ magick big.jpeg -resize 640x small.png
-$ pio small.png --output optimized.jpeg
+magick big.jpeg -resize 640x small.png
+pio small.png --output optimized.jpeg
 ```
 
 Most likely you also want to use [responsive images](https://developer.mozilla.org/en-US/docs/Learn/HTML/Multimedia_and_embedding/Responsive_images) where you create multiple differently sized images for different display resolutions.
@@ -131,7 +131,7 @@ This makes it possible to target the quality using a familiar 0-100 scale instea
 You can control the quality spread from the target using the `--spread` option. For example the following command:
 
 ```sh
-$ pio input.jpeg --quality 80 --spread 10 --output output.jpeg
+pio input.jpeg --quality 80 --spread 10 --output output.jpeg
 ```
 
 will target JPEG quality of 80 with the minimum quality of 70 and maximum quality of 90.

@@ -60,7 +60,7 @@ Download the latest Linux binary from [GitHub releases](https://github.com/siipt
 
 There are two versions: glibc and musl.
 glibc version is about 50% faster than musl version but may not work on old and non-glibc-based distributions.
-For reference, the glibc version is built on Ubuntu 18.04 against glibc 2.27.
+For reference, the glibc version is built on Ubuntu 20.04 against glibc 2.31.
 
 After downloading the binary, run `chmod +x path-to-pio` to make it executable.
 Consider storing the binary somewhere on your `PATH` like `/usr/local/bin/pio`.
